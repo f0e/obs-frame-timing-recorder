@@ -4,36 +4,68 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake" NO_POLICY_SCO
 
 project(${_name} VERSION ${_version})
 
-option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" OFF)
-option(ENABLE_QT "Use Qt functionality" OFF)
+if(NOT OS_WINDOWS)
+  message(FATAL_ERROR "${_name} is Windows only: it uses Direct3D 11 and Windows event tracing.")
+endif()
+
+# a newer toolset than the installed runtime is known to crash in std::mutex, so the runtime comes along
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 include(compilerconfig)
 include(defaults)
 include(helpers)
 
+# presentmon's frame tracking, vendored with stand-ins for the parts of its utility library it uses
+set(PRESENTMON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/presentmon")
+
+add_library(presentdata STATIC)
+target_sources(
+  presentdata
+  PRIVATE
+    "${PRESENTMON_DIR}/IntelPresentMon/CommonUtilities/Hash.cpp"
+    "${PRESENTMON_DIR}/IntelPresentMon/CommonUtilities/Shim.cpp"
+    "${PRESENTMON_DIR}/PresentData/Debug.cpp"
+    "${PRESENTMON_DIR}/PresentData/GpuTrace.cpp"
+    "${PRESENTMON_DIR}/PresentData/InterPresentActivity.cpp"
+    "${PRESENTMON_DIR}/PresentData/NvidiaTraceConsumer.cpp"
+    "${PRESENTMON_DIR}/PresentData/PresentMonTraceConsumer.cpp"
+    "${PRESENTMON_DIR}/PresentData/PresentMonTraceSession.cpp"
+    "${PRESENTMON_DIR}/PresentData/TraceConsumer.cpp"
+    "${PRESENTMON_DIR}/PresentData/TraceLogging.cpp"
+)
+target_include_directories(presentdata PUBLIC "${PRESENTMON_DIR}")
+target_compile_definitions(presentdata PUBLIC PRESENTMON_ENABLE_DEBUG_TRACE=0 NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_features(presentdata PUBLIC cxx_std_20)
+target_compile_options(presentdata PRIVATE /W0)
+target_link_libraries(presentdata PUBLIC advapi32 tdh)
+
 add_library(${CMAKE_PROJECT_NAME} MODULE)
 
 find_package(libobs REQUIRED)
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs)
+find_package(obs-frontend-api REQUIRED)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs OBS::obs-frontend-api presentdata d3d11)
 
-if(ENABLE_FRONTEND_API)
-  find_package(obs-frontend-api REQUIRED)
-  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::obs-frontend-api)
-endif()
-
-if(ENABLE_QT)
-  find_package(Qt6 COMPONENTS Widgets Core)
-  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets)
-  target_compile_options(
-    ${CMAKE_PROJECT_NAME}
-    PRIVATE $<$<C_COMPILER_ID:Clang,AppleClang>:-Wno-quoted-include-in-framework-header -Wno-comma>
-  )
-  set_target_properties(
-    ${CMAKE_PROJECT_NAME}
-    PROPERTIES AUTOMOC ON AUTOUIC ON AUTORCC ON
-  )
-endif()
-
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-main.c)
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/game_timing.cpp
+    src/logs.cpp
+    src/plugin.cpp
+    src/probe.cpp
+    src/process_names.cpp
+    src/recording.cpp
+    src/sidecar.cpp
+    src/warnings.cpp
+    src/win.cpp
+)
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_features(${CMAKE_PROJECT_NAME} PRIVATE cxx_std_20)
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
+
+# the plugin's tracing on the command line, to check whether this account is allowed to trace at all
+add_executable(frame-timing-check)
+target_sources(frame-timing-check PRIVATE src/process_names.cpp src/trace_check.cpp src/win.cpp)
+target_link_libraries(frame-timing-check PRIVATE presentdata)
+target_compile_features(frame-timing-check PRIVATE cxx_std_20)
+install(TARGETS frame-timing-check RUNTIME DESTINATION "${CMAKE_PROJECT_NAME}/bin/64bit")
