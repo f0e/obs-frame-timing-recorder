@@ -48,11 +48,11 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs OBS::obs-fronten
 target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
+    src/game.cpp
     src/game_timing.cpp
     src/logs.cpp
     src/plugin.cpp
     src/probe.cpp
-    src/process_names.cpp
     src/recording.cpp
     src/sidecar.cpp
     src/warnings.cpp
@@ -62,10 +62,3 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND
 target_compile_features(${CMAKE_PROJECT_NAME} PRIVATE cxx_std_20)
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
-
-# the plugin's tracing on the command line, to check whether this account is allowed to trace at all
-add_executable(frame-timing-check)
-target_sources(frame-timing-check PRIVATE src/process_names.cpp src/trace_check.cpp src/win.cpp)
-target_link_libraries(frame-timing-check PRIVATE presentdata)
-target_compile_features(frame-timing-check PRIVATE cxx_std_20)
-install(TARGETS frame-timing-check RUNTIME DESTINATION "${CMAKE_PROJECT_NAME}/bin/64bit")

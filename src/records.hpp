@@ -15,15 +15,12 @@ struct TickRecord {
 	uint64_t lagged_frames;
 };
 
-// one per tick that rendered the game capture for the output. the draw is bracketed by two flushes whose
-// completion the gpu reports: the first when everything queued before the draw has run, the second when the
-// draw itself has
+// one per tick that rendered the game capture for the output. the draw is followed by a flush whose
+// completion the gpu reports, which is when the draw - and so the read of the captured picture - really ran
 struct ReadRecord {
 	uint64_t frame_time;
-	int64_t submitted_before_qpc;
-	int64_t submitted_after_qpc;
-	int64_t done_before_qpc; // 0 if never reported
-	int64_t done_after_qpc;
+	int64_t submitted_qpc;
+	int64_t done_qpc; // 0 if the gpu never reported it
 };
 
 // one per encoded video packet an output received
@@ -62,19 +59,34 @@ struct PresentRecord {
 	// markers and from nvidia reflex's
 	uint64_t app_sim_start;
 	uint64_t reflex_sim_start;
+	// when the frame reached the screen, 0 if it never did. that is what a window capture sees, since its
+	// frames come from the compositor rather than from the game's own buffer
+	uint64_t screen_time;
+	uint64_t window; // the hwnd it was presented to, 0 if the trace didn't say
 };
 
-// the exe name of a process the present log mentions
-struct ProcessRecord {
+// how obs was capturing, which decides when a game frame becomes something obs can read
+enum class CaptureKind : uint64_t {
+	// game capture: obs's hook copies the game's own buffer as it presents
+	HOOK = 0,
+	// window capture: the compositor hands obs the window as it goes to the screen
+	WINDOW = 1,
+	OTHER = 2,
+};
+
+// a game obs captured while the log was running, and so whose presents it holds
+struct GameRecord {
 	uint64_t process_id;
+	uint64_t capture; // CaptureKind
+	uint64_t window;  // the hwnd obs captured, 0 if it wasn't found
 	char name[120];
 };
 
 static_assert(sizeof(TickRecord) == 32);
-static_assert(sizeof(ReadRecord) == 40);
+static_assert(sizeof(ReadRecord) == 24);
 static_assert(sizeof(PacketRecord) == 80);
-static_assert(sizeof(PresentRecord) == 104);
-static_assert(sizeof(ProcessRecord) == 128);
+static_assert(sizeof(PresentRecord) == 120);
+static_assert(sizeof(GameRecord) == 144);
 
 enum class GameTimingStatus : uint32_t {
 	TRACING = 0,

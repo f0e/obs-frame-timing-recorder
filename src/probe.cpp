@@ -2,6 +2,7 @@
 // ran on the gpu, which is when the captured picture was read
 
 #include "probe.hpp"
+#include "game.hpp"
 #include "logs.hpp"
 #include "win.hpp"
 
@@ -27,11 +28,6 @@ constexpr size_t MAX_WAITING = MAXIMUM_WAIT_OBJECTS - 1;
 // graphics thread never waits on the gpu
 class Completion {
 public:
-	struct Fence {
-		HANDLE before;
-		HANDLE after;
-	};
-
 	void start()
 	{
 		wake.reset(CreateEventW(nullptr, FALSE, FALSE, nullptr));
@@ -58,23 +54,22 @@ public:
 	}
 
 	// nothing when every event is still out, in which case this frame goes unmeasured
-	std::optional<Fence> take()
+	std::optional<HANDLE> take()
 	{
 		std::lock_guard lock(mutex);
-		if (spare.size() < 2)
+		if (spare.empty())
 			return std::nullopt;
 
-		Fence fence{spare.back(), spare[spare.size() - 2]};
-		spare.resize(spare.size() - 2);
-		return fence;
+		HANDLE event = spare.back();
+		spare.pop_back();
+		return event;
 	}
 
-	void submit(uint64_t sequence, Fence fence)
+	void submit(uint64_t sequence, HANDLE event)
 	{
 		{
 			std::lock_guard lock(mutex);
-			incoming.push_back({sequence, fence.before, false});
-			incoming.push_back({sequence, fence.after, true});
+			incoming.push_back({sequence, event});
 		}
 		SetEvent(wake.get());
 	}
@@ -83,7 +78,6 @@ private:
 	struct Waiting {
 		uint64_t sequence;
 		HANDLE event;
-		bool after;
 	};
 
 	void run(std::stop_token stop)
@@ -113,9 +107,7 @@ private:
 			Waiting done = waiting[index];
 			waiting.erase(waiting.begin() + index);
 
-			read_log.update(done.sequence, [&](ReadRecord &record) {
-				(done.after ? record.done_after_qpc : record.done_before_qpc) = now;
-			});
+			read_log.update(done.sequence, [now](ReadRecord &record) { record.done_qpc = now; });
 
 			std::lock_guard lock(mutex);
 			spare.push_back(done.event);
@@ -140,6 +132,7 @@ struct Probe {
 	obs_source_t *context;
 	ComPtr<ID3D11DeviceContext3> device_context;
 	bool unsupported = false;
+	bool watching = false;
 	uint64_t last_frame_time = UINT64_MAX;
 
 	ID3D11DeviceContext3 *ready_context()
@@ -165,6 +158,19 @@ struct Probe {
 	}
 };
 
+// the source this filter is on is the one obs captures the game with, so it says which game to log
+void probe_tick(void *data, float)
+{
+	auto *probe = static_cast<Probe *>(data);
+	if (probe->watching)
+		return;
+
+	if (obs_source_t *capture = obs_filter_get_parent(probe->context)) {
+		captured_game.watch(capture);
+		probe->watching = true;
+	}
+}
+
 void probe_render(void *data, gs_effect_t *)
 {
 	auto *probe = static_cast<Probe *>(data);
@@ -172,23 +178,19 @@ void probe_render(void *data, gs_effect_t *)
 
 	// the output's render comes first in each pass - later renders the same tick are previews and projectors
 	ID3D11DeviceContext3 *context = frame_time == probe->last_frame_time ? nullptr : probe->ready_context();
-	std::optional<Completion::Fence> fence = context ? completion.take() : std::nullopt;
-	if (!fence) {
+	std::optional<HANDLE> event = context ? completion.take() : std::nullopt;
+	if (!event) {
 		obs_source_skip_video_filter(probe->context);
 		return;
 	}
 	probe->last_frame_time = frame_time;
 
-	context->Flush1(D3D11_CONTEXT_TYPE_ALL, fence->before);
-	int64_t submitted_before = qpc_now();
-
 	obs_source_skip_video_filter(probe->context);
 
-	context->Flush1(D3D11_CONTEXT_TYPE_ALL, fence->after);
-	int64_t submitted_after = qpc_now();
-
-	uint64_t sequence = read_log.push({frame_time, submitted_before, submitted_after, 0, 0});
-	completion.submit(sequence, *fence);
+	// the event fires once the gpu has run everything flushed up to here, the draw above included
+	context->Flush1(D3D11_CONTEXT_TYPE_ALL, *event);
+	uint64_t sequence = read_log.push({frame_time, qpc_now(), 0});
+	completion.submit(sequence, *event);
 }
 
 } // namespace
@@ -201,7 +203,14 @@ void register_probe()
 		.output_flags = OBS_SOURCE_VIDEO,
 		.get_name = [](void *) { return obs_module_text("Probe.Name"); },
 		.create = [](obs_data_t *, obs_source_t *context) -> void * { return new Probe{context}; },
-		.destroy = [](void *data) { delete static_cast<Probe *>(data); },
+		.destroy =
+			[](void *data) {
+				auto *probe = static_cast<Probe *>(data);
+				if (probe->watching)
+					captured_game.unwatch();
+				delete probe;
+			},
+		.video_tick = probe_tick,
 		.video_render = probe_render,
 	};
 	obs_register_source(&info);

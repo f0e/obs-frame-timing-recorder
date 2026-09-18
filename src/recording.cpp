@@ -1,10 +1,10 @@
-// logs for recordings. a recording can run for hours, far longer than the logs are kept in memory, so while it
-// runs everything is copied out to files beside it every second, and when it stops - or splits into a new file
-// - those are put together into the file's sidecar
+// logs for recordings. a recording can run for hours, far longer than the logs are kept in memory, so its
+// sidecar is written as it goes: opened beside the recording, appended to every second, and finished when the
+// recording stops or splits into a new file
 
 #include "recording.hpp"
+#include "game.hpp"
 #include "logs.hpp"
-#include "process_names.hpp"
 #include "sidecar.hpp"
 #include "win.hpp"
 
@@ -16,10 +16,8 @@
 
 #include <chrono>
 #include <condition_variable>
-#include <fstream>
 #include <memory>
 #include <thread>
-#include <unordered_set>
 
 namespace ft {
 
@@ -32,137 +30,73 @@ constexpr auto COPY_INTERVAL = 1s;
 // logged from this long before a file starts, so its first frames have the game frames before them
 constexpr auto LEAD = 5s;
 
-// a read is left for this long before it's copied out, so the gpu has reported it
+// a read is left for this long before it's written out, so the gpu has reported it
 constexpr auto READ_SETTLE = 1s;
 
-// records of one kind, copied out of their log into a file as they come
-template<typename T> class Spool {
-public:
-	Spool(std::filesystem::path path, uint64_t sequence)
-		: path(std::move(path)),
-		  sequence(sequence),
-		  file(this->path, std::ios::in | std::ios::out | std::ios::binary | std::ios::trunc)
-	{
-	}
-
-	~Spool()
-	{
-		file.close();
-		std::error_code ignored;
-		std::filesystem::remove(path, ignored);
-	}
-
-	bool ok() const { return file.is_open(); }
-
-	void append(const Ring<T> &log, std::predicate<const T &> auto &&ready, std::predicate<const T &> auto &&keep)
-	{
-		if (!file)
-			return;
-
-		for (const T &record : log.read_from(sequence, ready)) {
-			if (keep(record) && write_record(file, record))
-				count++;
-		}
-	}
-
-	Section section(std::string_view tag)
-	{
-		return {tag, sizeof(T), count, [this](std::ostream &out) { return copy_into(out); }};
-	}
-
-private:
-	bool copy_into(std::ostream &out)
-	{
-		if (!file)
-			return count == 0;
-
-		file.flush();
-		file.clear();
-		file.seekg(0);
-
-		std::vector<char> buffer(1 << 20);
-		for (uint64_t left = count * sizeof(T); left > 0;) {
-			auto chunk = (std::streamsize)std::min<uint64_t>(left, buffer.size());
-			if (!file.read(buffer.data(), chunk) || !out.write(buffer.data(), chunk))
-				return false;
-			left -= (uint64_t)chunk;
-		}
-		return true;
-	}
-
-	std::filesystem::path path;
-	uint64_t sequence;
-	std::fstream file;
-	uint64_t count = 0;
-};
-
-// the logs for one recorded file, from when it started until it's finished
+// the log for one recorded file, from when it started until it's finished
 class Segment {
 public:
 	Segment(std::string video, uint64_t first_packet)
 		: video(std::move(video)),
 		  started(qpc_now() - qpc_ticks(LEAD)),
-		  ticks(spool_path("ticks"), 0),
-		  reads(spool_path("reads"), 0),
-		  packets(spool_path("packets"), first_packet),
-		  presents(spool_path("presents"), 0)
+		  packets(first_packet),
+		  file(open_sidecar(sidecar_path(), started))
 	{
-		if (!ticks.ok() || !reads.ok() || !packets.ok() || !presents.ok())
-			obs_log(LOG_WARNING, "couldn't create log files beside %s", this->video.c_str());
+		if (!file)
+			obs_log(LOG_WARNING, "couldn't write %s", sidecar_path().c_str());
 	}
 
 	const std::string &path() const { return video; }
 
 	std::string sidecar_path() const { return video + std::string(SIDECAR_SUFFIX); }
 
-	void copy(bool finishing)
+	void write_new(bool finishing)
 	{
+		if (!file)
+			return;
+
 		int64_t settled = qpc_now() - (finishing ? 0 : qpc_ticks(READ_SETTLE));
 		int64_t from = started;
 
-		ticks.append(tick_log, anything, [from](const TickRecord &r) { return r.qpc >= from; });
-		reads.append(
-			read_log, [settled](const ReadRecord &r) { return r.submitted_after_qpc < settled; },
-			[from](const ReadRecord &r) { return r.submitted_before_qpc >= from; });
-		packets.append(recording_packets.records, anything, anything);
-		presents.append(present_log, anything, [this](const PresentRecord &r) { return from_game(r); });
+		append("TICK", tick_log, ticks, anything, [from](const TickRecord &r) { return r.qpc >= from; });
+		append(
+			"READ", read_log, reads, [settled](const ReadRecord &r) { return r.submitted_qpc < settled; },
+			[from](const ReadRecord &r) { return r.submitted_qpc >= from; });
+		append("PCKT", recording_packets.records, packets, anything, anything);
+		append("PRES", present_log, presents, anything,
+		       [from](const PresentRecord &r) { return (int64_t)r.present_start >= from; });
 	}
 
-	bool write(int64_t saved)
+	bool finish(int64_t saved)
 	{
-		std::vector<uint64_t> process_ids(seen.begin(), seen.end());
-		auto processes = names.records(process_ids);
+		if (!file)
+			return false;
 
-		const Section sections[] = {
-			ticks.section("TICK"),    reads.section("READ"),         packets.section("PCKT"),
-			presents.section("PRES"), section_of("PROC", processes),
-		};
-		return write_sidecar(sidecar_path(), saved, sections);
+		write_new(true);
+		write_batch(file, "GAME", captured_game.records());
+		set_saved_qpc(file, saved);
+
+		file.close();
+		return file.good();
 	}
 
 private:
-	std::filesystem::path spool_path(std::string_view kind) const
+	template<typename T>
+	void append(std::string_view tag, const Ring<T> &log, uint64_t &cursor, std::predicate<const T &> auto &&ready,
+		    std::predicate<const T &> auto &&keep)
 	{
-		return as_path(sidecar_path() + "." + std::string(kind) + ".partial");
-	}
-
-	bool from_game(const PresentRecord &present)
-	{
-		if ((int64_t)present.present_start < started)
-			return false;
-		if (seen.insert(present.process_id).second)
-			names.learn(present.process_id);
-		return !never_the_game(names.name(present.process_id));
+		std::vector<T> records = log.read_from(cursor, ready);
+		std::erase_if(records, [&](const T &record) { return !keep(record); });
+		write_batch(file, tag, records);
 	}
 
 	std::string video;
 	int64_t started;
-	Spool<TickRecord> ticks;
-	Spool<ReadRecord> reads;
-	Spool<PacketRecord> packets;
-	Spool<PresentRecord> presents;
-	std::unordered_set<uint64_t> seen;
-	ProcessNames names;
+	uint64_t ticks = 0;
+	uint64_t reads = 0;
+	uint64_t packets;
+	uint64_t presents = 0;
+	std::ofstream file;
 };
 
 // what obs will remux a recorded file to once it's done, if it will. mirrors OBSBasic::AutoRemux
@@ -235,7 +169,7 @@ std::jthread copier;
 std::mutex wake_mutex;
 std::condition_variable_any wake;
 
-// puts a finished segment's sidecar together, away from whichever thread finished it
+// finishes a segment's sidecar away from whichever thread ended it
 void finish(std::unique_ptr<Segment> segment)
 {
 	if (!segment)
@@ -248,10 +182,9 @@ void finish(std::unique_ptr<Segment> segment)
 	finishers.emplace_back([segment = std::move(segment), saved, remuxed]() mutable {
 		// the last reads are usually reported by the gpu within a few milliseconds
 		std::this_thread::sleep_for(200ms);
-		segment->copy(true);
-		std::string sidecar = segment->sidecar_path();
 
-		if (!segment->write(saved)) {
+		std::string sidecar = segment->sidecar_path();
+		if (!segment->finish(saved)) {
 			obs_log(LOG_WARNING, "couldn't write %s", sidecar.c_str());
 			return;
 		}
@@ -296,7 +229,7 @@ void copy_loop(std::stop_token stop)
 
 		std::lock_guard lock(mutex);
 		if (current)
-			current->copy(false);
+			current->write_new(false);
 	}
 }
 

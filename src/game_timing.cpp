@@ -6,6 +6,7 @@
 // group. without either, everything else the plugin logs still works
 
 #include "game_timing.hpp"
+#include "game.hpp"
 #include "logs.hpp"
 #include "win.hpp"
 
@@ -53,12 +54,13 @@ PresentRecord record_of(const PresentEvent &present)
 		.flags = (present.IsLost ? PRESENT_LOST : 0) | (present.PresentFailed ? PRESENT_FAILED : 0),
 		.app_sim_start = present.AppSimStartTime,
 		.reflex_sim_start = present.PclSimStartTime,
+		.screen_time = present.Displayed.empty() ? 0 : present.Displayed.front().second,
+		.window = present.Hwnd,
 	};
 }
 
 void collect(std::stop_token stop)
 {
-	const uint32_t own_process = GetCurrentProcessId();
 	std::vector<std::shared_ptr<PresentEvent>> presents;
 	std::vector<ProcessEvent> processes;
 
@@ -68,9 +70,10 @@ void collect(std::stop_token stop)
 		consumer->DequeueProcessEvents(processes);
 		processes.clear();
 
+		// everything windows presents goes past here, and only the captured game can be in a recording
 		consumer->DequeuePresentEvents(presents);
 		for (const auto &present : presents) {
-			if (present && present->ProcessId != own_process)
+			if (present && captured_game.presented(present->ProcessId))
 				present_log.push(record_of(*present));
 		}
 		presents.clear();
