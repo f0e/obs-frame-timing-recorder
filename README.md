@@ -8,9 +8,12 @@ Every recording and saved replay gets a `<file>.frametiming` file next to it. Fo
 next to the video. If something moves your videos, move the log with them.
 
 - **Recordings:** the log is opened beside the recording and appended to as it runs, so a recording of any
-  length is covered, and finished when the recording stops or splits into a new file. If OBS remuxes
-  recordings automatically, the log is also written under the remuxed file's name.
+  length is covered, and finished when the recording stops or splits into a new file.
 - **Replays:** the log is written when the replay is saved.
+
+OBS's "automatically remux to mp4" isn't handled. The log is written beside the file OBS recorded, and OBS
+keeps that file, so give blur the original rather than the remuxed copy - or move the log next to the copy
+yourself.
 
 ## What it touches
 

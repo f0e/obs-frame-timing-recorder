@@ -11,7 +11,6 @@
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <plugin-support.h>
-#include <util/config-file.h>
 #include <util/util.hpp>
 
 #include <chrono>
@@ -41,10 +40,6 @@ namespace ft::recording {
 				  file(sidecar::open(sidecar_path(), started)) {
 				if (!file)
 					obs_log(LOG_WARNING, "couldn't write %s", sidecar_path().c_str());
-			}
-
-			const std::string& path() const {
-				return video;
 			}
 
 			std::string sidecar_path() const {
@@ -115,54 +110,6 @@ namespace ft::recording {
 			std::ofstream file;
 		};
 
-		// what obs will remux a recorded file to once it's done, if it will. mirrors OBSBasic::AutoRemux
-		struct Remux {
-			bool enabled = false;
-			bool fragmented = false;
-			bool prores = false;
-
-			std::string target(const std::string& path) const {
-				if (!enabled)
-					return "";
-
-				size_t dot = path.find_last_of('.');
-				if (dot == std::string::npos)
-					return "";
-
-				std::string stem = path.substr(0, dot + 1);
-				std::string suffix = path.substr(dot + 1);
-				if (_stricmp(suffix.c_str(), "avi") == 0)
-					return "";
-
-				std::string out = fragmented ? stem + "remuxed." + suffix : stem + (prores ? "mov" : "mp4");
-				return _stricmp(out.c_str(), path.c_str()) == 0 ? "" : out;
-			}
-		};
-
-		Remux remux_settings(obs_output_t* output) {
-			config_t* config = obs_frontend_get_profile_config();
-			if (!config || !config_get_bool(config, "Video", "AutoRemux"))
-				return {};
-
-			const char* mode = config_get_string(config, "Output", "Mode");
-			bool simple = !mode || strcmp(mode, "Simple") == 0;
-			if (!simple) {
-				const char* type = config_get_string(config, "AdvOut", "RecType");
-				if (type && _stricmp(type, "FFmpeg") == 0)
-					return {};
-			}
-
-			const char* format = config_get_string(config, simple ? "SimpleOutput" : "AdvOut", "RecFormat2");
-			obs_encoder_t* encoder = output ? obs_output_get_video_encoder(output) : nullptr;
-			const char* codec = encoder ? obs_encoder_get_codec(encoder) : nullptr;
-
-			return {
-				.enabled = true,
-				.fragmented = format && strncmp(format, "fragmented", 10) == 0,
-				.prores = codec && strcmp(codec, "prores") == 0,
-			};
-		}
-
 		// how many packets back a split file's log starts, to cover LEAD
 		uint64_t lead_packets() {
 			obs_video_info video{};
@@ -173,7 +120,6 @@ namespace ft::recording {
 
 		std::mutex mutex;
 		std::unique_ptr<Segment> current;
-		Remux remux;
 		OBSOutput watched;
 		uint64_t first_packet = 0; // where the recording's packets start in its packet log
 		std::vector<std::jthread> finishers;
@@ -190,32 +136,15 @@ namespace ft::recording {
 			int64_t saved = win::qpc_now();
 
 			std::lock_guard lock(mutex);
-			std::string remuxed = remux.target(segment->path());
-			finishers.emplace_back([segment = std::move(segment), saved, remuxed]() mutable {
+			finishers.emplace_back([segment = std::move(segment), saved]() mutable {
 				// the last reads are usually reported by the gpu within a few milliseconds
 				std::this_thread::sleep_for(200ms);
 
 				std::string sidecar_file = segment->sidecar_path();
-				if (!segment->finish(saved)) {
+				if (!segment->finish(saved))
 					obs_log(LOG_WARNING, "couldn't write %s", sidecar_file.c_str());
-					return;
-				}
-				obs_log(LOG_INFO, "wrote %s", sidecar_file.c_str());
-
-				// obs remuxes the recording after it's done, and blur looks for the log beside the file it opens
-				if (remuxed.empty())
-					return;
-
-				std::string copy = remuxed + std::string(sidecar::SUFFIX);
-				std::error_code failed;
-				std::filesystem::copy_file(
-					win::as_path(sidecar_file),
-					win::as_path(copy),
-					std::filesystem::copy_options::overwrite_existing,
-					failed
-				);
-				if (!failed)
-					obs_log(LOG_INFO, "wrote %s for the remuxed recording", copy.c_str());
+				else
+					obs_log(LOG_INFO, "wrote %s", sidecar_file.c_str());
 			});
 		}
 
@@ -268,7 +197,6 @@ namespace ft::recording {
 		unwatch();
 		watched = output.Get();
 		signal_handler_connect(obs_output_get_signal_handler(watched), "file_changed", on_file_changed, nullptr);
-		remux = remux_settings(output);
 
 		// packets can arrive before the started event is handled, so the log is attached already
 		logs::recording_packets.attach(output);
