@@ -22,23 +22,22 @@ MODULE_EXPORT const char* obs_module_description(void) {
 
 namespace {
 
-	using namespace ft;
 	using namespace std::chrono_literals;
 
 	void on_tick(void*, float) {
-		logs::tick.push(
-			{ win::qpc_now(), obs_get_video_frame_time(), obs_get_total_frames(), obs_get_lagged_frames() }
+		ft::logs::tick.push(
+			{ ft::win::qpc_now(), obs_get_video_frame_time(), obs_get_total_frames(), obs_get_lagged_frames() }
 		);
 	}
 
 	void warn_if_unprobed() {
-		if (logs::read.written() == 0)
-			warn(obs_module_text("Plugin.Name"), obs_module_text("Warning.NoProbe"));
+		if (ft::logs::read.written() == 0)
+			ft::warn(obs_module_text("Plugin.Name"), obs_module_text("Warning.NoProbe"));
 	}
 
 	void warn_about_game_timing() {
-		if (game_timing::status() == game_timing::Status::NO_PERMISSION)
-			warn(obs_module_text("Plugin.Name"), obs_module_text("Warning.NoPermission"));
+		if (ft::game_timing::status() == ft::game_timing::Status::NO_PERMISSION)
+			ft::warn(obs_module_text("Plugin.Name"), obs_module_text("Warning.NoPermission"));
 	}
 
 	// the replay can only reach back as far as the buffer holds, and saving takes a moment on top
@@ -53,7 +52,7 @@ namespace {
 	}
 
 	void save_replay_sidecar() {
-		int64_t saved = win::qpc_now();
+		int64_t saved = ft::win::qpc_now();
 
 		BPtr<char> replay = obs_frontend_get_last_replay();
 		if (!replay)
@@ -61,8 +60,8 @@ namespace {
 
 		warn_if_unprobed();
 
-		std::string path = std::string(replay.Get()) + std::string(sidecar::SUFFIX);
-		if (sidecar::write_replay(path, saved, saved - win::qpc_ticks(replay_buffer_length() + 10s)))
+		std::string path = std::string(replay.Get()) + std::string(ft::sidecar::SUFFIX);
+		if (ft::sidecar::write_replay(path, saved, saved - ft::win::qpc_ticks(replay_buffer_length() + 10s)))
 			obs_log(LOG_INFO, "wrote %s", path.c_str());
 		else
 			obs_log(LOG_WARNING, "couldn't write %s", path.c_str());
@@ -73,32 +72,32 @@ namespace {
 			case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTING:
 			case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED: {
 				OBSOutputAutoRelease output = obs_frontend_get_replay_buffer_output();
-				logs::replay_packets.attach(output);
+				ft::logs::replay_packets.attach(output);
 				break;
 			}
 			case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STOPPED:
-				logs::replay_packets.detach();
+				ft::logs::replay_packets.detach();
 				break;
 			case OBS_FRONTEND_EVENT_REPLAY_BUFFER_SAVED:
 				save_replay_sidecar();
 				break;
 			case OBS_FRONTEND_EVENT_RECORDING_STARTING:
-				recording::starting();
+				ft::recording::starting();
 				break;
 			case OBS_FRONTEND_EVENT_RECORDING_STARTED:
-				recording::started();
+				ft::recording::started();
 				break;
 			case OBS_FRONTEND_EVENT_RECORDING_STOPPED:
 				warn_if_unprobed();
-				recording::stopped();
+				ft::recording::stopped();
 				break;
 			case OBS_FRONTEND_EVENT_FINISHED_LOADING:
 				warn_about_game_timing();
 				break;
 			case OBS_FRONTEND_EVENT_EXIT:
-				logs::replay_packets.detach();
-				recording::finish_all();
-				game_timing::stop();
+				ft::logs::replay_packets.detach();
+				ft::recording::finish_all();
+				ft::game_timing::stop();
 				break;
 			default:
 				break;
