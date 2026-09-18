@@ -2,6 +2,7 @@
 #include "win.hpp"
 
 #include <plugin-support.h>
+#include <util/windows/window-helpers.h>
 
 #include <tlhelp32.h>
 
@@ -13,42 +14,28 @@ namespace ft {
 
 	namespace {
 
-		// the window the capture named belongs to the game, so its thread's process is the one presenting
-		HWND find_window(const char* title, const char* window_class) {
-			std::wstring wide_class = win::widen(window_class ? window_class : "");
-			std::wstring wide_title = win::widen(title ? title : "");
-
-			return FindWindowW(
-				wide_class.empty() ? nullptr : wide_class.c_str(), wide_title.empty() ? nullptr : wide_title.c_str()
-			);
-		}
-
-		// the title can have changed since it was hooked, so fall back to whoever is running that exe. two copies of
-		// the same game are rare, and logging both of them is harmless
+		// the last resort for a game whose window obs cannot match. two copies of the same exe are rare, and
+		// logging both of them is harmless
 		std::vector<uint64_t> by_executable(const char* executable) {
 			HANDLE taken = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 			if (taken == INVALID_HANDLE_VALUE)
 				return {};
 			win::Handle snapshot{ taken };
 
+			std::wstring wanted = win::widen(executable);
 			std::vector<uint64_t> found;
 			PROCESSENTRY32W entry{ .dwSize = sizeof(PROCESSENTRY32W) };
 			for (BOOL more = Process32FirstW(snapshot.get(), &entry); more;
 			     more = Process32NextW(snapshot.get(), &entry))
 			{
-				if (_stricmp(win::narrow(entry.szExeFile).c_str(), executable) == 0)
+				if (_wcsicmp(entry.szExeFile, wanted.c_str()) == 0)
 					found.push_back(entry.th32ProcessID);
 			}
 			return found;
 		}
 
-		GameRecord record_of(uint64_t process_id, CaptureKind capture, HWND window, const char* executable) {
-			GameRecord record{ .process_id = process_id,
-				               .capture = (uint64_t)capture,
-				               .window = (uint64_t)(uintptr_t)window };
-			std::string_view name = executable;
-			std::ranges::copy(name.substr(0, sizeof(record.name) - 1), record.name);
-			return record;
+		bool holds(const std::vector<GameRecord>& games, uint64_t process_id) {
+			return std::ranges::find(games, process_id, &GameRecord::process_id) != games.end();
 		}
 
 		// game capture hooks the game and copies its buffer; window capture is handed the window by the compositor
@@ -72,9 +59,8 @@ namespace ft {
 
 		kind = kind_of(capture);
 
-		signal_handler_t* signals = obs_source_get_signal_handler(capture);
 		on_hooked.Connect(
-			signals,
+			obs_source_get_signal_handler(capture),
 			"hooked",
 			[](void* param, calldata_t* params) {
 				static_cast<CapturedGame*>(param)->hooked(
@@ -85,7 +71,6 @@ namespace ft {
 			},
 			this
 		);
-		on_unhooked.Connect(signals, "unhooked", [](void*, calldata_t*) {}, this);
 
 		// it may have hooked its window before the filter was added, and a source without the call is neither a
 		// game capture nor a window capture
@@ -107,19 +92,21 @@ namespace ft {
 
 	void CapturedGame::unwatch() {
 		on_hooked.Disconnect();
-		on_unhooked.Disconnect();
 	}
 
 	void CapturedGame::hooked(const char* executable, const char* title, const char* window_class) {
 		if (!executable || !*executable)
 			return;
 
-		HWND window = find_window(title, window_class);
+		// obs's own matcher, so it lands on the window obs captured: it weighs the exe as well as the class and
+		// title, tolerates a title that has changed since the hook, and unwraps a uwp window onto the app's own
+		HWND window = ms_find_window(
+			INCLUDE_MINIMIZED, WINDOW_PRIORITY_EXE, window_class ? window_class : "", title ? title : "", executable
+		);
 		DWORD presenter = 0;
 		if (window)
 			GetWindowThreadProcessId(window, &presenter);
 
-		// the title can have changed since it was captured, so fall back to whoever runs that exe
 		std::vector<uint64_t> found = presenter ? std::vector<uint64_t>{ presenter } : by_executable(executable);
 		if (found.empty()) {
 			obs_log(LOG_WARNING, "obs captured %s, but it isn't running any more", executable);
@@ -128,21 +115,20 @@ namespace ft {
 
 		std::lock_guard lock(mutex);
 		for (uint64_t process_id : found) {
-			bool known = std::ranges::any_of(games, [process_id](const GameRecord& game) {
-				return game.process_id == process_id;
-			});
-			if (!known) {
-				games.push_back(record_of(process_id, kind, window, executable));
-				obs_log(LOG_INFO, "logging the frames %s (%llu) draws", executable, (unsigned long long)process_id);
-			}
+			if (holds(games, process_id))
+				continue;
+
+			GameRecord& record = games.emplace_back(
+				GameRecord{ .process_id = process_id, .capture = (uint64_t)kind, .window = (uint64_t)(uintptr_t)window }
+			);
+			std::string_view{ executable }.copy(record.name, sizeof(record.name) - 1);
+			obs_log(LOG_INFO, "logging the frames %s (%llu) draws", executable, (unsigned long long)process_id);
 		}
 	}
 
 	bool CapturedGame::presented(uint64_t process_id) const {
 		std::lock_guard lock(mutex);
-		return std::ranges::any_of(games, [process_id](const GameRecord& game) {
-			return game.process_id == process_id;
-		});
+		return holds(games, process_id);
 	}
 
 	std::vector<GameRecord> CapturedGame::records() const {

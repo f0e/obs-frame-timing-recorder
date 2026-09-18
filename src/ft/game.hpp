@@ -27,7 +27,6 @@ namespace ft {
 
 		mutable std::mutex mutex;
 		OBSSignal on_hooked;
-		OBSSignal on_unhooked;
 		CaptureKind kind = CaptureKind::OTHER;
 		// every game captured while the plugin has been running: one that restarts comes back under a new id
 		std::vector<GameRecord> games;
