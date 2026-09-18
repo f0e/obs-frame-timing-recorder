@@ -55,7 +55,6 @@ target_sources(
     src/ft/probe.cpp
     src/ft/recording.cpp
     src/ft/sidecar.cpp
-    src/ft/warnings.cpp
     src/ft/win.cpp
 )
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)

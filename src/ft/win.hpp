@@ -32,7 +32,6 @@ namespace ft::win {
 
 	// obs hands out utf-8, windows' apis want utf-16
 	std::wstring widen(std::string_view text);
-	std::string narrow(std::wstring_view text);
 
 	inline std::filesystem::path as_path(std::string_view utf8) {
 		return std::filesystem::path{ widen(utf8) };
@@ -49,5 +48,7 @@ namespace ft::win {
 	};
 
 	using Handle = std::unique_ptr<void, HandleCloser>;
+
+	void warn(std::string_view title, std::string_view message);
 
 } // namespace ft::win

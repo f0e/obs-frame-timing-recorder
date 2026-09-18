@@ -1,5 +1,7 @@
 #include "win.hpp"
 
+#include <thread>
+
 namespace ft::win {
 
 	std::wstring widen(std::string_view text) {
@@ -9,16 +11,6 @@ namespace ft::win {
 		int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), (int)text.size(), nullptr, 0);
 		std::wstring out(size, L'\0');
 		MultiByteToWideChar(CP_UTF8, 0, text.data(), (int)text.size(), out.data(), size);
-		return out;
-	}
-
-	std::string narrow(std::wstring_view text) {
-		if (text.empty())
-			return {};
-
-		int size = WideCharToMultiByte(CP_UTF8, 0, text.data(), (int)text.size(), nullptr, 0, nullptr, nullptr);
-		std::string out(size, '\0');
-		WideCharToMultiByte(CP_UTF8, 0, text.data(), (int)text.size(), out.data(), size, nullptr, nullptr);
 		return out;
 	}
 
@@ -47,6 +39,14 @@ namespace ft::win {
 			member = FALSE;
 		FreeSid(group);
 		return member != FALSE;
+	}
+
+	void warn(std::string_view title, std::string_view message) {
+		std::thread([title = win::widen(title), message = win::widen(message)] {
+			MessageBoxW(
+				nullptr, message.c_str(), title.c_str(), MB_OK | MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST
+			);
+		}).detach();
 	}
 
 } // namespace ft::win

@@ -3,7 +3,6 @@
 #include "ft/probe.hpp"
 #include "ft/recording.hpp"
 #include "ft/sidecar.hpp"
-#include "ft/warnings.hpp"
 #include "ft/win.hpp"
 
 #include <obs-frontend-api.h>
@@ -32,12 +31,12 @@ namespace {
 
 	void warn_if_unprobed() {
 		if (ft::logs::read.written() == 0)
-			ft::warn(obs_module_text("Plugin.Name"), obs_module_text("Warning.NoProbe"));
+			ft::win::warn(obs_module_text("Plugin.Name"), obs_module_text("Warning.NoProbe"));
 	}
 
 	void warn_about_game_timing() {
 		if (ft::game_timing::status() == ft::game_timing::Status::NO_PERMISSION)
-			ft::warn(obs_module_text("Plugin.Name"), obs_module_text("Warning.NoPermission"));
+			ft::win::warn(obs_module_text("Plugin.Name"), obs_module_text("Warning.NoPermission"));
 	}
 
 	// the replay can only reach back as far as the buffer holds, and saving takes a moment on top
