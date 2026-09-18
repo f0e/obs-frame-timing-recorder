@@ -1,10 +1,10 @@
-#include "game_timing.hpp"
-#include "logs.hpp"
-#include "probe.hpp"
-#include "recording.hpp"
-#include "sidecar.hpp"
-#include "warnings.hpp"
-#include "win.hpp"
+#include "ft/game_timing.hpp"
+#include "ft/logs.hpp"
+#include "ft/probe.hpp"
+#include "ft/recording.hpp"
+#include "ft/sidecar.hpp"
+#include "ft/warnings.hpp"
+#include "ft/win.hpp"
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
@@ -26,17 +26,19 @@ namespace {
 	using namespace std::chrono_literals;
 
 	void on_tick(void*, float) {
-		tick_log.push({ qpc_now(), obs_get_video_frame_time(), obs_get_total_frames(), obs_get_lagged_frames() });
+		logs::tick.push(
+			{ win::qpc_now(), obs_get_video_frame_time(), obs_get_total_frames(), obs_get_lagged_frames() }
+		);
 	}
 
 	void warn_if_unprobed() {
-		if (read_log.written() == 0)
-			warn_once("no_probe", obs_module_text("Plugin.Name"), obs_module_text("Warning.NoProbe"));
+		if (logs::read.written() == 0)
+			warn(obs_module_text("Plugin.Name"), obs_module_text("Warning.NoProbe"));
 	}
 
 	void warn_about_game_timing() {
-		if (game_timing_status() == GameTimingStatus::NO_PERMISSION)
-			warn_once("no_permission", obs_module_text("Plugin.Name"), obs_module_text("Warning.NoPermission"));
+		if (game_timing::status() == game_timing::Status::NO_PERMISSION)
+			warn(obs_module_text("Plugin.Name"), obs_module_text("Warning.NoPermission"));
 	}
 
 	// the replay can only reach back as far as the buffer holds, and saving takes a moment on top
@@ -51,7 +53,7 @@ namespace {
 	}
 
 	void save_replay_sidecar() {
-		int64_t saved = qpc_now();
+		int64_t saved = win::qpc_now();
 
 		BPtr<char> replay = obs_frontend_get_last_replay();
 		if (!replay)
@@ -59,8 +61,8 @@ namespace {
 
 		warn_if_unprobed();
 
-		std::string path = std::string(replay.Get()) + std::string(SIDECAR_SUFFIX);
-		if (write_replay_sidecar(path, saved, saved - qpc_ticks(replay_buffer_length() + 10s)))
+		std::string path = std::string(replay.Get()) + std::string(sidecar::SUFFIX);
+		if (sidecar::write_replay(path, saved, saved - win::qpc_ticks(replay_buffer_length() + 10s)))
 			obs_log(LOG_INFO, "wrote %s", path.c_str());
 		else
 			obs_log(LOG_WARNING, "couldn't write %s", path.c_str());
@@ -71,32 +73,32 @@ namespace {
 			case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTING:
 			case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED: {
 				OBSOutputAutoRelease output = obs_frontend_get_replay_buffer_output();
-				replay_packets.attach(output);
+				logs::replay_packets.attach(output);
 				break;
 			}
 			case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STOPPED:
-				replay_packets.detach();
+				logs::replay_packets.detach();
 				break;
 			case OBS_FRONTEND_EVENT_REPLAY_BUFFER_SAVED:
 				save_replay_sidecar();
 				break;
 			case OBS_FRONTEND_EVENT_RECORDING_STARTING:
-				recording_starting();
+				recording::starting();
 				break;
 			case OBS_FRONTEND_EVENT_RECORDING_STARTED:
-				recording_started();
+				recording::started();
 				break;
 			case OBS_FRONTEND_EVENT_RECORDING_STOPPED:
 				warn_if_unprobed();
-				recording_stopped();
+				recording::stopped();
 				break;
 			case OBS_FRONTEND_EVENT_FINISHED_LOADING:
 				warn_about_game_timing();
 				break;
 			case OBS_FRONTEND_EVENT_EXIT:
-				replay_packets.detach();
-				finish_recordings();
-				stop_game_timing();
+				logs::replay_packets.detach();
+				recording::finish_all();
+				game_timing::stop();
 				break;
 			default:
 				break;
@@ -106,9 +108,9 @@ namespace {
 } // namespace
 
 bool obs_module_load(void) {
-	ft::register_probe();
-	ft::start_probe_worker();
-	ft::start_game_timing();
+	ft::probe::register_source();
+	ft::probe::start_worker();
+	ft::game_timing::start();
 	obs_add_tick_callback(on_tick, nullptr);
 	obs_frontend_add_event_callback(on_event, nullptr);
 	obs_log(LOG_INFO, "loaded - add the Frame Timing Probe filter to the game capture source");
@@ -118,8 +120,8 @@ bool obs_module_load(void) {
 void obs_module_unload(void) {
 	obs_frontend_remove_event_callback(on_event, nullptr);
 	obs_remove_tick_callback(on_tick, nullptr);
-	ft::replay_packets.detach();
-	ft::finish_recordings();
-	ft::stop_game_timing();
-	ft::stop_probe_worker();
+	ft::logs::replay_packets.detach();
+	ft::recording::finish_all();
+	ft::game_timing::stop();
+	ft::probe::stop_worker();
 }

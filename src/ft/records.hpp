@@ -88,11 +88,4 @@ namespace ft {
 	static_assert(sizeof(PresentRecord) == 120);
 	static_assert(sizeof(GameRecord) == 144);
 
-	enum class GameTimingStatus : uint32_t {
-		TRACING = 0,
-		NO_PERMISSION = 1,
-		FAILED = 2,
-		NOT_STARTED = 3,
-	};
-
 } // namespace ft

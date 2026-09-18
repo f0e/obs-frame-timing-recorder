@@ -6,14 +6,14 @@
 #include <obs.h>
 #include <obs.hpp>
 
-namespace ft {
+namespace ft::logs {
 
 	// about 12 minutes of each at 360fps - more than a replay buffer usually holds, and far more than a recording
 	// needs between two looks
-	inline Ring<TickRecord> tick_log{ 1 << 18 };
-	inline Ring<ReadRecord> read_log{ 1 << 18 };
+	inline Ring<TickRecord> tick{ 1 << 18 };
+	inline Ring<ReadRecord> read{ 1 << 18 };
 	// a game at 1000fps for about 4 minutes, plus whatever else presents
-	inline Ring<PresentRecord> present_log{ 1 << 18 };
+	inline Ring<PresentRecord> present{ 1 << 18 };
 
 	// the encoded video packets one output receives. the replay buffer and the recording each have their own,
 	// since both can run at once and matching a file to its packets needs one output's log
@@ -33,4 +33,4 @@ namespace ft {
 	inline PacketLog replay_packets;
 	inline PacketLog recording_packets;
 
-} // namespace ft
+} // namespace ft::logs

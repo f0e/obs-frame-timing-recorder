@@ -77,10 +77,6 @@ administrator.
 
 ### Warnings
 
-Warnings you've turned off are remembered in
-`%APPDATA%\obs-studio\plugin_config\obs-frame-timing-recorder\settings.json`. Delete that file to see them
-again.
-
 The plugin warns when:
 
 - it has no permission to trace the game's frames (when OBS starts)
@@ -112,7 +108,7 @@ Version 6, little endian. Blur reads only this version.
   fps den.
 - **Batches:** the rest of the file is batches, each an 8-byte header (4-byte tag, u32 count) followed by its
   records. A replay writes one batch per tag; a recording appends more as it goes, so a tag turns up once per
-  batch written and the reader joins them. The records are the structs in `src/records.hpp`, all 8-byte
+  batch written and the reader joins them. The records are the structs in `src/ft/records.hpp`, all 8-byte
   fields:
   - `TICK`: qpc, frame_time, total_frames, lagged_frames.
   - `READ`: frame_time, the QPC the flush after the draw was submitted, and the QPC the GPU reported it

@@ -48,15 +48,15 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs OBS::obs-fronten
 target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
-    src/game.cpp
-    src/game_timing.cpp
-    src/logs.cpp
     src/plugin.cpp
-    src/probe.cpp
-    src/recording.cpp
-    src/sidecar.cpp
-    src/warnings.cpp
-    src/win.cpp
+    src/ft/game.cpp
+    src/ft/game_timing.cpp
+    src/ft/logs.cpp
+    src/ft/probe.cpp
+    src/ft/recording.cpp
+    src/ft/sidecar.cpp
+    src/ft/warnings.cpp
+    src/ft/win.cpp
 )
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_features(${CMAKE_PROJECT_NAME} PRIVATE cxx_std_20)

@@ -15,8 +15,8 @@ namespace ft {
 
 		// the window the capture named belongs to the game, so its thread's process is the one presenting
 		HWND find_window(const char* title, const char* window_class) {
-			std::wstring wide_class = widen(window_class ? window_class : "");
-			std::wstring wide_title = widen(title ? title : "");
+			std::wstring wide_class = win::widen(window_class ? window_class : "");
+			std::wstring wide_title = win::widen(title ? title : "");
 
 			return FindWindowW(
 				wide_class.empty() ? nullptr : wide_class.c_str(), wide_title.empty() ? nullptr : wide_title.c_str()
@@ -29,14 +29,14 @@ namespace ft {
 			HANDLE taken = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 			if (taken == INVALID_HANDLE_VALUE)
 				return {};
-			Handle snapshot{ taken };
+			win::Handle snapshot{ taken };
 
 			std::vector<uint64_t> found;
 			PROCESSENTRY32W entry{ .dwSize = sizeof(PROCESSENTRY32W) };
 			for (BOOL more = Process32FirstW(snapshot.get(), &entry); more;
 			     more = Process32NextW(snapshot.get(), &entry))
 			{
-				if (_stricmp(narrow(entry.szExeFile).c_str(), executable) == 0)
+				if (_stricmp(win::narrow(entry.szExeFile).c_str(), executable) == 0)
 					found.push_back(entry.th32ProcessID);
 			}
 			return found;

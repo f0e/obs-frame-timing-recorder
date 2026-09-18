@@ -17,7 +17,7 @@
 
 using Microsoft::WRL::ComPtr;
 
-namespace ft {
+namespace ft::probe {
 
 	namespace {
 
@@ -88,7 +88,7 @@ namespace ft {
 						handles.push_back(entry.event);
 
 					DWORD result = WaitForMultipleObjects((DWORD)handles.size(), handles.data(), FALSE, INFINITE);
-					int64_t now = qpc_now();
+					int64_t now = win::qpc_now();
 
 					if (result == WAIT_OBJECT_0) {
 						std::lock_guard lock(mutex);
@@ -104,7 +104,7 @@ namespace ft {
 					Waiting done = waiting[index];
 					waiting.erase(waiting.begin() + index);
 
-					read_log.update(done.sequence, [now](ReadRecord& record) {
+					logs::read.update(done.sequence, [now](ReadRecord& record) {
 						record.done_qpc = now;
 					});
 
@@ -118,10 +118,10 @@ namespace ft {
 			}
 
 			std::mutex mutex;
-			std::vector<Handle> events; // owns them all, spare and in use alike
+			std::vector<win::Handle> events; // owns them all, spare and in use alike
 			std::vector<HANDLE> spare;
 			std::vector<Waiting> incoming;
-			Handle wake;
+			win::Handle wake;
 			std::jthread worker;
 		};
 
@@ -185,13 +185,13 @@ namespace ft {
 
 			// the event fires once the gpu has run everything flushed up to here, the draw above included
 			context->Flush1(D3D11_CONTEXT_TYPE_ALL, *event);
-			uint64_t sequence = read_log.push({ frame_time, qpc_now(), 0 });
+			uint64_t sequence = logs::read.push({ frame_time, win::qpc_now(), 0 });
 			completion.submit(sequence, *event);
 		}
 
 	} // namespace
 
-	void register_probe() {
+	void register_source() {
 		static const obs_source_info info{
 			.id = "frame_timing_probe",
 			.type = OBS_SOURCE_TYPE_FILTER,
@@ -216,12 +216,12 @@ namespace ft {
 		obs_register_source(&info);
 	}
 
-	void start_probe_worker() {
+	void start_worker() {
 		completion.start();
 	}
 
-	void stop_probe_worker() {
+	void stop_worker() {
 		completion.stop();
 	}
 
-} // namespace ft
+} // namespace ft::probe

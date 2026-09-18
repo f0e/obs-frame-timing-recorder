@@ -9,7 +9,7 @@
 #include <string>
 #include <string_view>
 
-namespace ft {
+namespace ft::win {
 
 	inline int64_t qpc_now() {
 		LARGE_INTEGER now;
@@ -50,4 +50,4 @@ namespace ft {
 
 	using Handle = std::unique_ptr<void, HandleCloser>;
 
-} // namespace ft
+} // namespace ft::win

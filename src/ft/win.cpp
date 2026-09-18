@@ -1,6 +1,6 @@
 #include "win.hpp"
 
-namespace ft {
+namespace ft::win {
 
 	std::wstring widen(std::string_view text) {
 		if (text.empty())
@@ -49,4 +49,4 @@ namespace ft {
 		return member != FALSE;
 	}
 
-} // namespace ft
+} // namespace ft::win

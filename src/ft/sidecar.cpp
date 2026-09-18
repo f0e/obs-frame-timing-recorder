@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cstddef>
 
-namespace ft {
+namespace ft::sidecar {
 
 	namespace {
 
@@ -18,7 +18,7 @@ namespace ft {
 		struct Header {
 			char magic[8];
 			uint32_t version;
-			uint32_t game_timing; // GameTimingStatus
+			uint32_t game_timing; // game_timing::Status
 			int64_t qpc_frequency;
 			int64_t saved_qpc;
 			uint32_t fps_num;
@@ -37,7 +37,7 @@ namespace ft {
 		static_assert(offsetof(Header, saved_qpc) == 24);
 		static_assert(sizeof(BatchHeader) == 8);
 
-		constexpr uint32_t SIDECAR_VERSION = 6;
+		constexpr uint32_t VERSION = 6;
 
 		template<typename T>
 		bool write_record(std::ostream& out, const T& record) {
@@ -47,8 +47,8 @@ namespace ft {
 
 	} // namespace
 
-	std::ofstream open_sidecar(std::string_view path, int64_t saved_qpc) {
-		std::ofstream file(as_path(path), std::ios::binary);
+	std::ofstream open(std::string_view path, int64_t saved_qpc) {
+		std::ofstream file(win::as_path(path), std::ios::binary);
 		if (!file)
 			return file;
 
@@ -56,9 +56,9 @@ namespace ft {
 		obs_get_video_info(&video);
 
 		Header header{
-			.version = SIDECAR_VERSION,
-			.game_timing = (uint32_t)game_timing_status(),
-			.qpc_frequency = qpc_frequency(),
+			.version = VERSION,
+			.game_timing = (uint32_t)game_timing::status(),
+			.qpc_frequency = win::qpc_frequency(),
 			.saved_qpc = saved_qpc,
 			.fps_num = video.fps_num,
 			.fps_den = video.fps_den,
@@ -83,14 +83,14 @@ namespace ft {
 		return write_record(out, header);
 	}
 
-	bool write_replay_sidecar(std::string_view path, int64_t saved_qpc, int64_t from_qpc) {
+	bool write_replay(std::string_view path, int64_t saved_qpc, int64_t from_qpc) {
 		// taken before the file is opened so a slow disk doesn't hold the logs up
-		auto ticks = since(tick_log, from_qpc, &TickRecord::qpc);
-		auto reads = since(read_log, from_qpc, &ReadRecord::submitted_qpc);
-		auto packets = since(replay_packets.records, from_qpc, &PacketRecord::received_qpc);
-		auto presents = since(present_log, from_qpc, &PresentRecord::present_start);
+		auto ticks = since(logs::tick, from_qpc, &TickRecord::qpc);
+		auto reads = since(logs::read, from_qpc, &ReadRecord::submitted_qpc);
+		auto packets = since(logs::replay_packets.records, from_qpc, &PacketRecord::received_qpc);
+		auto presents = since(logs::present, from_qpc, &PresentRecord::present_start);
 
-		std::ofstream file = open_sidecar(path, saved_qpc);
+		std::ofstream file = open(path, saved_qpc);
 		bool ok = file && write_batch(file, "TICK", ticks) && write_batch(file, "READ", reads) &&
 		          write_batch(file, "PCKT", packets) && write_batch(file, "PRES", presents) &&
 		          write_batch(file, "GAME", captured_game.records());
@@ -99,4 +99,4 @@ namespace ft {
 		return ok && file.good();
 	}
 
-} // namespace ft
+} // namespace ft::sidecar

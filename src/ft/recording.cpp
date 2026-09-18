@@ -19,7 +19,7 @@
 #include <memory>
 #include <thread>
 
-namespace ft {
+namespace ft::recording {
 
 	namespace {
 
@@ -37,8 +37,8 @@ namespace ft {
 		class Segment {
 		public:
 			Segment(std::string video, uint64_t first_packet)
-				: video(std::move(video)), started(qpc_now() - qpc_ticks(LEAD)), packets(first_packet),
-				  file(open_sidecar(sidecar_path(), started)) {
+				: video(std::move(video)), started(win::qpc_now() - win::qpc_ticks(LEAD)), packets(first_packet),
+				  file(sidecar::open(sidecar_path(), started)) {
 				if (!file)
 					obs_log(LOG_WARNING, "couldn't write %s", sidecar_path().c_str());
 			}
@@ -48,22 +48,22 @@ namespace ft {
 			}
 
 			std::string sidecar_path() const {
-				return video + std::string(SIDECAR_SUFFIX);
+				return video + std::string(sidecar::SUFFIX);
 			}
 
 			void write_new(bool finishing) {
 				if (!file)
 					return;
 
-				int64_t settled = qpc_now() - (finishing ? 0 : qpc_ticks(READ_SETTLE));
+				int64_t settled = win::qpc_now() - (finishing ? 0 : win::qpc_ticks(READ_SETTLE));
 				int64_t from = started;
 
-				append("TICK", tick_log, ticks, anything, [from](const TickRecord& r) {
+				append("TICK", logs::tick, ticks, anything, [from](const TickRecord& r) {
 					return r.qpc >= from;
 				});
 				append(
 					"READ",
-					read_log,
+					logs::read,
 					reads,
 					[settled](const ReadRecord& r) {
 						return r.submitted_qpc < settled;
@@ -72,8 +72,8 @@ namespace ft {
 						return r.submitted_qpc >= from;
 					}
 				);
-				append("PCKT", recording_packets.records, packets, anything, anything);
-				append("PRES", present_log, presents, anything, [from](const PresentRecord& r) {
+				append("PCKT", logs::recording_packets.records, packets, anything, anything);
+				append("PRES", logs::present, presents, anything, [from](const PresentRecord& r) {
 					return (int64_t)r.present_start >= from;
 				});
 			}
@@ -83,8 +83,8 @@ namespace ft {
 					return false;
 
 				write_new(true);
-				write_batch(file, "GAME", captured_game.records());
-				set_saved_qpc(file, saved);
+				sidecar::write_batch(file, "GAME", captured_game.records());
+				sidecar::set_saved_qpc(file, saved);
 
 				file.close();
 				return file.good();
@@ -103,7 +103,7 @@ namespace ft {
 				std::erase_if(records, [&](const T& record) {
 					return !keep(record);
 				});
-				write_batch(file, tag, records);
+				sidecar::write_batch(file, tag, records);
 			}
 
 			std::string video;
@@ -187,7 +187,7 @@ namespace ft {
 			if (!segment)
 				return;
 
-			int64_t saved = qpc_now();
+			int64_t saved = win::qpc_now();
 
 			std::lock_guard lock(mutex);
 			std::string remuxed = remux.target(segment->path());
@@ -195,21 +195,24 @@ namespace ft {
 				// the last reads are usually reported by the gpu within a few milliseconds
 				std::this_thread::sleep_for(200ms);
 
-				std::string sidecar = segment->sidecar_path();
+				std::string sidecar_file = segment->sidecar_path();
 				if (!segment->finish(saved)) {
-					obs_log(LOG_WARNING, "couldn't write %s", sidecar.c_str());
+					obs_log(LOG_WARNING, "couldn't write %s", sidecar_file.c_str());
 					return;
 				}
-				obs_log(LOG_INFO, "wrote %s", sidecar.c_str());
+				obs_log(LOG_INFO, "wrote %s", sidecar_file.c_str());
 
 				// obs remuxes the recording after it's done, and blur looks for the log beside the file it opens
 				if (remuxed.empty())
 					return;
 
-				std::string copy = remuxed + std::string(SIDECAR_SUFFIX);
+				std::string copy = remuxed + std::string(sidecar::SUFFIX);
 				std::error_code failed;
 				std::filesystem::copy_file(
-					as_path(sidecar), as_path(copy), std::filesystem::copy_options::overwrite_existing, failed
+					win::as_path(sidecar_file),
+					win::as_path(copy),
+					std::filesystem::copy_options::overwrite_existing,
+					failed
 				);
 				if (!failed)
 					obs_log(LOG_INFO, "wrote %s for the remuxed recording", copy.c_str());
@@ -225,7 +228,7 @@ namespace ft {
 			{
 				std::lock_guard lock(mutex);
 				done = std::move(current);
-				uint64_t written = recording_packets.records.written();
+				uint64_t written = logs::recording_packets.records.written();
 				uint64_t lead = std::min(written, lead_packets());
 				current = std::make_unique<Segment>(next, std::max(first_packet, written - lead));
 			}
@@ -256,7 +259,7 @@ namespace ft {
 
 	} // namespace
 
-	void recording_starting() {
+	void starting() {
 		OBSOutputAutoRelease output = obs_frontend_get_recording_output();
 		if (!output)
 			return;
@@ -268,14 +271,14 @@ namespace ft {
 		remux = remux_settings(output);
 
 		// packets can arrive before the started event is handled, so the log is attached already
-		recording_packets.attach(output);
-		first_packet = recording_packets.records.written();
+		logs::recording_packets.attach(output);
+		first_packet = logs::recording_packets.records.written();
 
 		if (!copier.joinable())
 			copier = std::jthread(copy_loop);
 	}
 
-	void recording_started() {
+	void started() {
 		BPtr<char> path = obs_frontend_get_last_recording();
 		if (!path)
 			return;
@@ -289,7 +292,7 @@ namespace ft {
 		finish(std::move(previous));
 	}
 
-	void recording_stopped() {
+	void stopped() {
 		std::unique_ptr<Segment> done;
 		{
 			std::lock_guard lock(mutex);
@@ -297,11 +300,11 @@ namespace ft {
 			unwatch();
 		}
 		finish(std::move(done));
-		recording_packets.detach();
+		logs::recording_packets.detach();
 	}
 
-	void finish_recordings() {
-		recording_stopped();
+	void finish_all() {
+		stopped();
 
 		// a jthread stops and joins when it's assigned over or destroyed
 		copier = {};
@@ -314,4 +317,4 @@ namespace ft {
 		waiting.clear();
 	}
 
-} // namespace ft
+} // namespace ft::recording

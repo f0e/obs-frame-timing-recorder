@@ -1,7 +1,7 @@
 #include "logs.hpp"
 #include "win.hpp"
 
-namespace ft {
+namespace ft::logs {
 
 	void PacketLog::on_packet(obs_output_t*, encoder_packet* packet, encoder_packet_time* time, void* param) {
 		if (packet->type != OBS_ENCODER_VIDEO)
@@ -18,7 +18,7 @@ namespace ft {
 				time ? time->cts : 0,
 				time ? time->fer : 0,
 				time ? time->ferc : 0,
-				qpc_now(),
+				win::qpc_now(),
 			}
 		);
 	}
@@ -41,4 +41,4 @@ namespace ft {
 		output = nullptr;
 	}
 
-} // namespace ft
+} // namespace ft::logs

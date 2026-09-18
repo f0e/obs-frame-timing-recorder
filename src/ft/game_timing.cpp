@@ -20,7 +20,7 @@
 #include <memory>
 #include <thread>
 
-namespace ft {
+namespace ft::game_timing {
 
 	namespace {
 
@@ -32,7 +32,7 @@ namespace ft {
 
 		constexpr auto COLLECT_INTERVAL = std::chrono::milliseconds(20);
 
-		std::atomic<GameTimingStatus> status = GameTimingStatus::NOT_STARTED;
+		std::atomic<Status> current = Status::NOT_STARTED;
 		std::unique_ptr<PMTraceConsumer> consumer;
 		PMTraceSession session;
 		std::jthread consume_thread;
@@ -72,21 +72,21 @@ namespace ft {
 				consumer->DequeuePresentEvents(presents);
 				for (const auto& present : presents) {
 					if (present && captured_game.presented(present->ProcessId))
-						present_log.push(record_of(*present));
+						logs::present.push(record_of(*present));
 				}
 				presents.clear();
 			}
 		}
 
-		GameTimingStatus fail(GameTimingStatus why) {
+		Status fail(Status why) {
 			consumer.reset();
-			status = why;
+			current = why;
 			return why;
 		}
 
 	} // namespace
 
-	GameTimingStatus start_game_timing() {
+	Status start() {
 		consumer = std::make_unique<PMTraceConsumer>(CONSUMER_BUFFER);
 		// presentdata hands a present over as soon as it stops tracking it, and without display tracking that's
 		// before its gpu work is known
@@ -112,15 +112,15 @@ namespace ft {
 				"no permission to trace game frames - run OBS as administrator, or add your account to the "
 				"\"Performance Log Users\" group and sign in again (%s). Recordings are still logged, with "
 				"less accurate timing",
-				in_performance_log_users() ? "you're in the group, but this sign-in session doesn't have it yet"
-										   : "you're not in the group"
+				win::in_performance_log_users() ? "you're in the group, but this sign-in session doesn't have it yet"
+												: "you're not in the group"
 			);
-			return fail(GameTimingStatus::NO_PERMISSION);
+			return fail(Status::NO_PERMISSION);
 		}
 
 		if (result != ERROR_SUCCESS) {
 			obs_log(LOG_WARNING, "couldn't start tracing game frames (error %lu)", result);
-			return fail(GameTimingStatus::FAILED);
+			return fail(Status::FAILED);
 		}
 
 		consume_thread = std::jthread([] {
@@ -132,12 +132,12 @@ namespace ft {
 		collect_thread = std::jthread(collect);
 
 		obs_log(LOG_INFO, "tracing game frames");
-		status = GameTimingStatus::TRACING;
-		return status;
+		current = Status::TRACING;
+		return current;
 	}
 
-	void stop_game_timing() {
-		if (status != GameTimingStatus::TRACING)
+	void stop() {
+		if (current != Status::TRACING)
 			return;
 
 		// stopping the session ends ProcessTrace; assigning over a jthread asks it to stop and joins it
@@ -146,11 +146,11 @@ namespace ft {
 		collect_thread = {};
 
 		consumer.reset();
-		status = GameTimingStatus::NOT_STARTED;
+		current = Status::NOT_STARTED;
 	}
 
-	GameTimingStatus game_timing_status() {
-		return status;
+	Status status() {
+		return current;
 	}
 
-} // namespace ft
+} // namespace ft::game_timing
