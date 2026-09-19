@@ -4,6 +4,7 @@
 #include "probe.hpp"
 #include "fingerprint.hpp"
 #include "game.hpp"
+#include "gpu_timer.hpp"
 #include "logs.hpp"
 #include "win.hpp"
 
@@ -136,11 +137,13 @@ namespace ft::probe {
 		struct Probe {
 			obs_source_t* context;
 			ComPtr<ID3D11DeviceContext3> device_context;
+			ID3D11Device* device = nullptr;
 			bool unsupported = false;
 			bool watching = false;
 			bool fingerprinting = true;
 			uint64_t last_frame_time = UINT64_MAX;
 			Fingerprint fingerprint;
+			GpuTimer gpu_timer;
 
 			ID3D11DeviceContext3* ready_context() {
 				if (device_context || unsupported)
@@ -152,8 +155,10 @@ namespace ft::probe {
 					return nullptr;
 				}
 
+				device = static_cast<ID3D11Device*>(gs_get_device_obj());
+
 				ComPtr<ID3D11DeviceContext> immediate;
-				static_cast<ID3D11Device*>(gs_get_device_obj())->GetImmediateContext(&immediate);
+				device->GetImmediateContext(&immediate);
 				if (FAILED(immediate.As(&device_context))) {
 					obs_log(LOG_WARNING, "the probe needs direct3d 11.3");
 					return nullptr;
@@ -223,6 +228,12 @@ namespace ft::probe {
 			}
 			probe->last_frame_time = frame_time;
 
+			uint64_t sequence = logs::read.push({ frame_time, win::qpc_now(), 0, 0, 0, 0, 0 });
+
+			// the gpu stamps either side of the draw below, which measures the draw itself rather than the
+			// draw plus however long this machine took to wake a thread on the flush
+			bool timed = probe->gpu_timer.begin(probe->device, context, sequence);
+
 			// the fingerprint has to be of the picture that was encoded, not of a second read of the shared
 			// texture, so the output is drawn from the one texture the fingerprint hashes
 			std::optional<std::pair<uint32_t, uint32_t>> size =
@@ -235,11 +246,22 @@ namespace ft::probe {
 			if (!picture)
 				obs_source_skip_video_filter(probe->context);
 
+			if (timed)
+				probe->gpu_timer.end(context);
+
 			// the event fires once the gpu has run everything flushed up to here, the draw that read the
 			// picture included and nothing after it
 			context->Flush1(D3D11_CONTEXT_TYPE_ALL, *event);
-			uint64_t sequence = logs::read.push({ frame_time, win::qpc_now(), 0, 0 });
 			completion.submit(sequence, *event);
+
+			GpuTimer::Sample stamped{};
+			if (probe->gpu_timer.collect(context, stamped)) {
+				logs::read.update(stamped.sequence, [&stamped](ReadRecord& record) {
+					record.gpu_begin = stamped.begin;
+					record.gpu_end = stamped.end;
+					record.gpu_frequency = stamped.frequency;
+				});
+			}
 
 			if (picture) {
 				draw_picture(picture, size->first, size->second);
@@ -277,6 +299,7 @@ namespace ft::probe {
 
 					obs_enter_graphics();
 					probe->fingerprint.release();
+					probe->gpu_timer.release();
 					obs_leave_graphics();
 
 					delete probe;

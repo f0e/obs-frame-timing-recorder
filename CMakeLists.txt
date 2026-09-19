@@ -51,6 +51,7 @@ target_sources(
     src/plugin.cpp
     src/ft/fingerprint.cpp
     src/ft/game.cpp
+    src/ft/gpu_timer.cpp
     src/ft/game_timing.cpp
     src/ft/logs.cpp
     src/ft/probe.cpp

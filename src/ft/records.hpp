@@ -24,6 +24,12 @@ namespace ft {
 		// a hash of the picture that was read, box filtered down first. 0 if it wasn't worked out - the
 		// readback hadn't finished, or fingerprinting is off. never 0 otherwise
 		uint64_t fingerprint;
+		// when the gpu ran the draw that read the picture, on the gpu's own clock, which shares no zero with
+		// QPC - `done_qpc` is the same moment in QPC plus however long the wait took to wake. all 0 when the
+		// gpu didn't time it
+		uint64_t gpu_begin;
+		uint64_t gpu_end;
+		uint64_t gpu_frequency; // gpu ticks per second, 0 if the span was disjoint and can't be used
 	};
 
 	// one per encoded video packet an output received
@@ -103,7 +109,7 @@ namespace ft {
 	};
 
 	static_assert(sizeof(TickRecord) == 32);
-	static_assert(sizeof(ReadRecord) == 32);
+	static_assert(sizeof(ReadRecord) == 56);
 	static_assert(sizeof(PacketRecord) == 80);
 	static_assert(sizeof(PresentRecord) == 136);
 	static_assert(sizeof(GameRecord) == 160);

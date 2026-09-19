@@ -40,7 +40,7 @@ namespace ft::sidecar {
 		static_assert(offsetof(Header, saved_qpc) == 24);
 		static_assert(sizeof(BatchHeader) == 8);
 
-		constexpr uint32_t VERSION = 7;
+		constexpr uint32_t VERSION = 8;
 
 		// Which tick rendered the frame a packet carries, relative to the tick whose timestamp it has.
 		//
