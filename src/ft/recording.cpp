@@ -35,9 +35,9 @@ namespace ft::recording {
 		// the log for one recorded file, from when it started until it's finished
 		class Segment {
 		public:
-			Segment(std::string video, uint64_t first_packet)
+			Segment(std::string video, uint64_t first_packet, obs_output_t* output)
 				: video(std::move(video)), started(win::qpc_now() - win::qpc_ticks(LEAD)), packets(first_packet),
-				  file(sidecar::open(sidecar_path(), started)) {
+				  file(sidecar::open(sidecar_path(), started, output)) {
 				if (!file)
 					obs_log(LOG_WARNING, "couldn't write %s", sidecar_path().c_str());
 			}
@@ -159,7 +159,7 @@ namespace ft::recording {
 				done = std::move(current);
 				uint64_t written = logs::recording_packets.records.written();
 				uint64_t lead = std::min(written, lead_packets());
-				current = std::make_unique<Segment>(next, std::max(first_packet, written - lead));
+				current = std::make_unique<Segment>(next, std::max(first_packet, written - lead), watched.Get());
 			}
 			finish(std::move(done));
 		}
@@ -215,7 +215,7 @@ namespace ft::recording {
 		{
 			std::lock_guard lock(mutex);
 			previous = std::move(current);
-			current = std::make_unique<Segment>(path.Get(), first_packet);
+			current = std::make_unique<Segment>(path.Get(), first_packet, watched.Get());
 		}
 		finish(std::move(previous));
 	}

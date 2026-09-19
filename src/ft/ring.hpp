@@ -34,6 +34,12 @@ namespace ft {
 			return written_;
 		}
 
+		// whether anything pushed has been overwritten, so the log no longer reaches back as far as it was asked
+		bool wrapped() const {
+			std::lock_guard lock(mutex);
+			return written_ > items.size();
+		}
+
 		std::vector<T> snapshot() const {
 			uint64_t from = 0;
 			return read_from(from, [](const T&) {

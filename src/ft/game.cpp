@@ -2,6 +2,7 @@
 #include "win.hpp"
 
 #include <plugin-support.h>
+#include <util/util_uint64.h>
 #include <util/windows/window-helpers.h>
 
 #include <tlhelp32.h>
@@ -34,8 +35,20 @@ namespace ft {
 			return found;
 		}
 
-		bool holds(const std::vector<GameRecord>& games, uint64_t process_id) {
-			return std::ranges::find(games, process_id, &GameRecord::process_id) != games.end();
+		GameRecord* held(std::vector<GameRecord>& games, uint64_t process_id) {
+			auto found = std::ranges::find(games, process_id, &GameRecord::process_id);
+			return found == games.end() ? nullptr : &*found;
+		}
+
+		// the interval game-capture.c hands the hook, which is what it skips presents on. it's half an obs
+		// frame, or a whole one with "limit capture framerate" on (reset_frame_interval, game-capture.c)
+		uint64_t frame_interval(bool limit_framerate) {
+			obs_video_info video{};
+			if (!obs_get_video_info(&video) || !video.fps_num)
+				return 0;
+
+			uint64_t interval = util_mul_div64(video.fps_den, 1000000000ULL, video.fps_num);
+			return limit_framerate ? interval : interval / 2;
 		}
 
 		// game capture hooks the game and copies its buffer; window capture is handed the window by the compositor
@@ -58,6 +71,7 @@ namespace ft {
 			return;
 
 		kind = kind_of(capture);
+		source = OBSGetWeakRef(capture);
 
 		on_hooked.Connect(
 			obs_source_get_signal_handler(capture),
@@ -92,6 +106,18 @@ namespace ft {
 
 	void CapturedGame::unwatch() {
 		on_hooked.Disconnect();
+		source = nullptr;
+	}
+
+	// what the capture source's own settings mean for the hook, which blur can't work out from anywhere else
+	uint64_t CapturedGame::capture_flags() const {
+		OBSSourceAutoRelease capture = obs_weak_source_get_source(source);
+		if (!capture || kind != CaptureKind::HOOK)
+			return 0;
+
+		OBSDataAutoRelease settings = obs_source_get_settings(capture);
+		return (obs_data_get_bool(settings, "limit_framerate") ? CAPTURE_LIMIT_FRAMERATE : 0) |
+		       (obs_data_get_bool(settings, "sli_compatibility") ? CAPTURE_SHARED_MEMORY : 0);
 	}
 
 	void CapturedGame::hooked(const char* executable, const char* title, const char* window_class) {
@@ -113,22 +139,42 @@ namespace ft {
 			return;
 		}
 
+		uint64_t flags = capture_flags();
+		uint64_t interval = kind == CaptureKind::HOOK ? frame_interval(flags & CAPTURE_LIMIT_FRAMERATE) : 0;
+
 		std::lock_guard lock(mutex);
 		for (uint64_t process_id : found) {
-			if (holds(games, process_id))
+			// a re-hook, which is what a change to the capture's settings causes, brings the new settings with it
+			if (GameRecord* existing = held(games, process_id)) {
+				existing->flags = flags;
+				existing->frame_interval = interval;
+				existing->window = (uint64_t)(uintptr_t)window;
 				continue;
+			}
 
-			GameRecord& record = games.emplace_back(
-				GameRecord{ .process_id = process_id, .capture = (uint64_t)kind, .window = (uint64_t)(uintptr_t)window }
-			);
+			GameRecord& record = games.emplace_back(GameRecord{
+				.process_id = process_id,
+				.capture = (uint64_t)kind,
+				.window = (uint64_t)(uintptr_t)window,
+				.flags = flags,
+				.frame_interval = interval,
+			});
 			std::string_view{ executable }.copy(record.name, sizeof(record.name) - 1);
-			obs_log(LOG_INFO, "logging the frames %s (%llu) draws", executable, (unsigned long long)process_id);
+			obs_log(
+				LOG_INFO,
+				"logging the frames %s (%llu) draws, skipped on a %.2fms interval%s",
+				executable,
+				(unsigned long long)process_id,
+				(double)interval / 1e6,
+				(flags & CAPTURE_SHARED_MEMORY) ? ", in compatibility mode - the timing model doesn't cover that"
+				                                : ""
+			);
 		}
 	}
 
 	bool CapturedGame::presented(uint64_t process_id) const {
 		std::lock_guard lock(mutex);
-		return holds(games, process_id);
+		return std::ranges::find(games, process_id, &GameRecord::process_id) != games.end();
 	}
 
 	std::vector<GameRecord> CapturedGame::records() const {

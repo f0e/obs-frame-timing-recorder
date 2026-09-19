@@ -59,8 +59,9 @@ namespace {
 
 		warn_if_unprobed();
 
+		OBSOutputAutoRelease output = obs_frontend_get_replay_buffer_output();
 		std::string path = std::string(replay.Get()) + std::string(ft::sidecar::SUFFIX);
-		if (ft::sidecar::write_replay(path, saved, saved - ft::win::qpc_ticks(replay_buffer_length() + 10s)))
+		if (ft::sidecar::write_replay(path, saved, saved - ft::win::qpc_ticks(replay_buffer_length() + 10s), output))
 			obs_log(LOG_INFO, "wrote %s", path.c_str());
 		else
 			obs_log(LOG_WARNING, "couldn't write %s", path.c_str());

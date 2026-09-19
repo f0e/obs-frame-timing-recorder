@@ -1,5 +1,7 @@
 #pragma once
 
+#include <obs.h>
+
 #include <cstdint>
 #include <fstream>
 #include <ostream>
@@ -13,8 +15,9 @@ namespace ft::sidecar {
 
 	// a sidecar is a header followed by batches of records, each tagged with what it holds: TICK, READ, PCKT,
 	// PRES or GAME. a replay writes one batch per tag, a recording appends more as it runs, so nothing has to be
-	// held anywhere until it stops. blur's frame_timing.py reads them back
-	std::ofstream open(std::string_view path, int64_t saved_qpc);
+	// held anywhere until it stops. blur's frame_timing_log.py reads them back. `output` is the output being
+	// logged, whose encoder decides which tick a frame belongs to
+	std::ofstream open(std::string_view path, int64_t saved_qpc, obs_output_t* output);
 
 	// everything in a sidecar is relative to this, which a recording only knows once it ends
 	bool set_saved_qpc(std::ostream& out, int64_t saved_qpc);
@@ -38,6 +41,6 @@ namespace ft::sidecar {
 	}
 
 	// a replay's sidecar, from what was logged from `from_qpc` on
-	bool write_replay(std::string_view path, int64_t saved_qpc, int64_t from_qpc);
+	bool write_replay(std::string_view path, int64_t saved_qpc, int64_t from_qpc, obs_output_t* output);
 
 } // namespace ft::sidecar

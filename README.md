@@ -89,38 +89,50 @@ The plugin warns when:
 
 1. **Ticks.** A tick callback logs every OBS video tick: its QPC time, `obs_get_video_frame_time()` and the
    total and lagged frame counters.
-2. **When OBS read the picture.** The probe filter follows the game capture's draw with an
-   `ID3D11DeviceContext3::Flush1` carrying an event, which the GPU sets once it has run everything flushed up
-   to there, the draw included. A worker thread timestamps those events, so the graphics thread never waits
-   on the GPU. Only the first render of each tick counts - the later ones are previews and projectors.
-3. **When the game drew its frames.** An event tracing session runs PresentMon's `PresentData`, which reports
+2. **When OBS read the picture.** The probe filter renders the capture into a texture of its own and
+   follows that draw with an `ID3D11DeviceContext3::Flush1` carrying an event, which the GPU sets once it has
+   run everything flushed up to there, the draw included. A worker thread timestamps those events, so the
+   graphics thread never waits on the GPU. Only the first render of each tick counts - the later ones are
+   previews and projectors.
+3. **What OBS read.** The output is drawn from that same texture, and a chain of halving draws box-filters it
+   down to about 64 cells a side, which is read back a few frames later and hashed. So each recorded frame
+   carries a fingerprint of the picture that was encoded, and blur knows exactly which recorded frames are
+   repeats instead of comparing the video's frames afterwards. It costs about one extra full-frame copy per
+   tick; the filter's **Fingerprint the picture** setting turns it off, at the cost of blur having to guess
+   repeats again.
+4. **When the game drew its frames.** An event tracing session runs PresentMon's `PresentData`, which reports
    every present with its CPU start, time in present, GPU start and ready times, and the simulation start the
    game reports (Intel PresentMon markers or NVIDIA Reflex) where there is one, and when it reached the
    screen. Only the game matters, so the plugin asks the source the probe is on which process it captured
    (both Game Capture and Window Capture answer), and logs that process's presents and nothing else.
-4. **Which file frame is which tick.** Every encoded video packet is logged with its size and timestamps. The
-   saved file is matched to the log afterwards by its sequence of packet sizes, because OBS gives no signal
-   that ties a saved file to the frames it holds.
+5. **Which file frame is which tick.** Every encoded video packet is logged with its size and timestamps.
+   The saved file is matched to the log afterwards by its sequence of packet sizes, because OBS gives no
+   signal that ties a saved file to the frames it holds. Which tick *rendered* a packet is then exact: the
+   packet carries `cts`, the timestamp OBS gave the frame, which is the same number the tick log holds, and
+   the header says how many ticks after that stamp the render happened (one for a texture encoder, none for a
+   raw one - the plugin works it out from the output's encoder).
 
 ## Sidecar format
 
-Version 6, little endian. Blur reads only this version.
+Version 7, little endian. Blur reads only this version.
 
-- **Header (40 bytes):** `BLURFTIM`, u32 version, u32 game timing status (0 tracing, 1 no permission, 2
+- **Header (44 bytes):** `BLURFTIM`, u32 version, u32 game timing status (0 tracing, 1 no permission, 2
   failed, 3 not started), i64 QPC frequency, i64 QPC everything in the log is relative to, u32 fps num, u32
-  fps den.
+  fps den, u32 render delay (ticks between the tick a frame is stamped with and the tick that rendered it).
 - **Batches:** the rest of the file is batches, each an 8-byte header (4-byte tag, u32 count) followed by its
   records. A replay writes one batch per tag; a recording appends more as it goes, so a tag turns up once per
   batch written and the reader joins them. The records are the structs in `src/ft/records.hpp`, all 8-byte
   fields:
   - `TICK`: qpc, frame_time, total_frames, lagged_frames.
-  - `READ`: frame_time, the QPC the flush after the draw was submitted, and the QPC the GPU reported it
-    finished (0 if it never did).
+  - `READ`: frame_time, the QPC the flush after the draw was submitted, the QPC the GPU reported it
+    finished (0 if it never did), and a hash of the picture that was read (0 if there isn't one).
   - `PCKT`: pts, dts, dts_usec, sys_dts_usec, size, keyframe, cts, fer, ferc, received_qpc.
-  - `PRES`: present_start, time_in_present, gpu_start, ready, gpu_duration, swap_chain, process_id, runtime,
-    present_mode, final_state, flags, app_sim_start, reflex_sim_start, screen_time, window.
+  - `PRES`: present_start, time_in_present, gpu_start, ready, swap_chain, process_id, runtime, present_mode,
+    final_state, flags, app_sim_start, app_sim_end, reflex_sim_start, reflex_sim_end, screen_time, frame type
+    (2 is the game's own frame, higher means the compositor generated it), window.
   - `GAME`: process_id, capture kind (0 game capture, 1 window capture, 2 neither), the captured window,
-    then a 120-byte UTF-8 exe name - one for each game captured while the log was running.
+    flags (1 the capture limits its framerate, 2 it's in compatibility mode), the interval in nanoseconds the
+    hook skips presents on, then a 120-byte UTF-8 exe name - one for each game captured while the log ran.
 
 A replay's log covers the replay buffer's length plus 10 seconds; a recording's covers the whole file. The
 logs kept in memory hold about 12 minutes at 360fps, which is why a recording's log is written as it runs

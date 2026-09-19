@@ -49,6 +49,7 @@ target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
     src/plugin.cpp
+    src/ft/fingerprint.cpp
     src/ft/game.cpp
     src/ft/game_timing.cpp
     src/ft/logs.cpp

@@ -24,9 +24,11 @@ namespace ft {
 
 	private:
 		void hooked(const char* executable, const char* title, const char* window_class);
+		uint64_t capture_flags() const;
 
 		mutable std::mutex mutex;
 		OBSSignal on_hooked;
+		OBSWeakSource source;
 		CaptureKind kind = CaptureKind::OTHER;
 		// every game captured while the plugin has been running: one that restarts comes back under a new id
 		std::vector<GameRecord> games;

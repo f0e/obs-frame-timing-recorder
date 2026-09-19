@@ -44,7 +44,6 @@ namespace ft::game_timing {
 				.time_in_present = present.TimeInPresent,
 				.gpu_start = present.GPUStartTime,
 				.ready = present.ReadyTime,
-				.gpu_duration = present.GPUDuration,
 				.swap_chain = present.SwapChainAddress,
 				.process_id = present.ProcessId,
 				.runtime = (uint64_t)present.Runtime,
@@ -52,8 +51,11 @@ namespace ft::game_timing {
 				.final_state = (uint64_t)present.FinalState,
 				.flags = (present.IsLost ? PRESENT_LOST : 0) | (present.PresentFailed ? PRESENT_FAILED : 0),
 				.app_sim_start = present.AppSimStartTime,
+				.app_sim_end = present.AppSimEndTime,
 				.reflex_sim_start = present.PclSimStartTime,
+				.reflex_sim_end = present.PclSimEndTime,
 				.screen_time = present.Displayed.empty() ? 0 : present.Displayed.front().second,
+				.frame_type = present.Displayed.empty() ? 0 : (uint64_t)present.Displayed.front().first,
 				.window = present.Hwnd,
 			};
 		}
@@ -95,6 +97,8 @@ namespace ft::game_timing {
 		// games that say when they simulate each frame
 		consumer->mTrackAppTiming = true;
 		consumer->mTrackPcLatency = true;
+		// what the compositor showed: the game's own frame, or one generated between two of them
+		consumer->mTrackFrameType = true;
 
 		session.mPMConsumer = consumer.get();
 		ULONG result = session.Start(nullptr, SESSION_NAME);
