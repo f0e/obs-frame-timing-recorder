@@ -15,6 +15,7 @@
 #include <PresentData/PresentMonTraceConsumer.hpp>
 #include <PresentData/PresentMonTraceSession.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -26,13 +27,25 @@ namespace ft::game_timing {
 
 		constexpr wchar_t SESSION_NAME[] = L"obs-frame-timing-recorder";
 
+		// what ControlTrace wants: the properties with room for the session name after them
+		struct TraceProperties : EVENT_TRACE_PROPERTIES {
+			wchar_t session_name[MAX_PATH];
+		};
+
 		// presents the consumer holds before they're collected. presentmon's default drops presents from games running
 		// at a few hundred fps
 		constexpr uint32_t CONSUMER_BUFFER = 16384;
 
 		constexpr auto COLLECT_INTERVAL = std::chrono::milliseconds(20);
 
+		// a flush is only a request, and presentdata holds a present back until it knows how it ended, so the
+		// wait is on the presents arriving rather than on the flush returning
+		constexpr auto DRAIN_POLL = std::chrono::milliseconds(5);
+		constexpr auto REFLUSH_INTERVAL = std::chrono::milliseconds(250);
+
 		std::atomic<Status> current = Status::NOT_STARTED;
+		// the newest present handed to the log, so a drain can tell how far the trace has got
+		std::atomic<int64_t> collected = 0;
 		std::unique_ptr<PMTraceConsumer> consumer;
 		PMTraceSession session;
 		std::jthread consume_thread;
@@ -72,10 +85,16 @@ namespace ft::game_timing {
 
 				// everything windows presents goes past here, and only the captured game can be in a recording
 				consumer->DequeuePresentEvents(presents);
+				int64_t newest = collected.load(std::memory_order_relaxed);
 				for (const auto& present : presents) {
-					if (present && captured_game.presented(present->ProcessId))
+					if (present && captured_game.presented(present->ProcessId)) {
 						logs::present.push(record_of(*present));
+						// presentdata completes a present once it knows how it ended, which is roughly but not
+						// exactly the order they started in
+						newest = std::max(newest, (int64_t)present->PresentStartTime);
+					}
 				}
+				collected.store(newest, std::memory_order_relaxed);
 				presents.clear();
 			}
 		}
@@ -138,6 +157,36 @@ namespace ft::game_timing {
 		obs_log(LOG_INFO, "tracing game frames");
 		current = Status::TRACING;
 		return current;
+	}
+
+	bool drain(int64_t until, std::chrono::milliseconds give_up_after) {
+		if (current != Status::TRACING)
+			return true;
+
+		auto flush = [] {
+			// only the session name and the size have to be filled in for a flush
+			TraceProperties properties = {};
+			properties.Wnode.BufferSize = sizeof(properties);
+			properties.LoggerNameOffset = offsetof(TraceProperties, session_name);
+			ControlTraceW(session.mSessionHandle, nullptr, &properties, EVENT_TRACE_CONTROL_FLUSH);
+		};
+
+		auto deadline = std::chrono::steady_clock::now() + give_up_after;
+		auto next_flush = std::chrono::steady_clock::now();
+
+		while (collected.load(std::memory_order_relaxed) < until) {
+			auto now = std::chrono::steady_clock::now();
+			if (now >= deadline)
+				return false;
+			// the game keeps presenting while this waits, so one flush only covers what was buffered then
+			if (now >= next_flush) {
+				flush();
+				next_flush = now + REFLUSH_INTERVAL;
+			}
+			std::this_thread::sleep_for(DRAIN_POLL);
+		}
+
+		return true;
 	}
 
 	void stop() {

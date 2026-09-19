@@ -4,6 +4,7 @@
 
 #include "recording.hpp"
 #include "game.hpp"
+#include "game_timing.hpp"
 #include "logs.hpp"
 #include "sidecar.hpp"
 #include "win.hpp"
@@ -31,6 +32,13 @@ namespace ft::recording {
 
 		// a read is left for this long before it's written out, so the gpu has reported it
 		constexpr auto READ_SETTLE = 1s;
+
+		// how long the last reads take the gpu to report, once nothing more is being drawn
+		constexpr auto READ_REPORTED = 200ms;
+
+		// long enough for etw to hand over a flush of its buffers, and for presentdata to finish the presents
+		// in it, without holding a recording's log open if the game has stopped presenting altogether
+		constexpr auto DRAIN_TIMEOUT = 2s;
 
 		// the log for one recorded file, from when it started until it's finished
 		class Segment {
@@ -138,7 +146,9 @@ namespace ft::recording {
 			std::lock_guard lock(mutex);
 			finishers.emplace_back([segment = std::move(segment), saved]() mutable {
 				// the last reads are usually reported by the gpu within a few milliseconds
-				std::this_thread::sleep_for(200ms);
+				std::this_thread::sleep_for(READ_REPORTED);
+				if (!game_timing::drain(saved, DRAIN_TIMEOUT))
+					obs_log(LOG_WARNING, "gave up waiting for the last game frames - the log's tail has none");
 
 				std::string sidecar_file = segment->sidecar_path();
 				if (!segment->finish(saved))

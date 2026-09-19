@@ -10,7 +10,11 @@
 #include <plugin-support.h>
 #include <util/util.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <string>
+#include <thread>
+#include <vector>
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -22,6 +26,10 @@ MODULE_EXPORT const char* obs_module_description(void) {
 namespace {
 
 	using namespace std::chrono_literals;
+
+	// as in recording.cpp: long enough for etw to hand over its buffers, short enough not to hang around when
+	// the game has stopped presenting
+	constexpr auto DRAIN_TIMEOUT = 2s;
 
 	void on_tick(void*, float) {
 		ft::logs::tick.push(
@@ -50,6 +58,10 @@ namespace {
 		return held > 0 ? std::chrono::seconds(held) : 300s;
 	}
 
+	// the last game frames are still inside etw's buffers when a replay is saved, and waiting for them can't
+	// happen on obs's own thread, so each save finishes on one of these
+	std::vector<std::jthread> savers;
+
 	void save_replay_sidecar() {
 		int64_t saved = ft::win::qpc_now();
 
@@ -61,10 +73,20 @@ namespace {
 
 		OBSOutputAutoRelease output = obs_frontend_get_replay_buffer_output();
 		std::string path = std::string(replay.Get()) + std::string(ft::sidecar::SUFFIX);
-		if (ft::sidecar::write_replay(path, saved, saved - ft::win::qpc_ticks(replay_buffer_length() + 10s), output))
-			obs_log(LOG_INFO, "wrote %s", path.c_str());
-		else
-			obs_log(LOG_WARNING, "couldn't write %s", path.c_str());
+		int64_t from = saved - ft::win::qpc_ticks(replay_buffer_length() + 10s);
+
+		std::erase_if(savers, [](const std::jthread& saver) {
+			return !saver.joinable();
+		});
+		savers.emplace_back([path = std::move(path), saved, from, output = OBSOutput(output.Get())] {
+			if (!ft::game_timing::drain(saved, DRAIN_TIMEOUT))
+				obs_log(LOG_WARNING, "gave up waiting for the last game frames - the log's tail has none");
+
+			if (ft::sidecar::write_replay(path, saved, from, output.Get()))
+				obs_log(LOG_INFO, "wrote %s", path.c_str());
+			else
+				obs_log(LOG_WARNING, "couldn't write %s", path.c_str());
+		});
 	}
 
 	void on_event(enum obs_frontend_event event, void*) {
@@ -95,6 +117,8 @@ namespace {
 				warn_about_game_timing();
 				break;
 			case OBS_FRONTEND_EVENT_EXIT:
+				// a jthread joins when it's destroyed, so this waits for any replay still being written
+				savers.clear();
 				ft::logs::replay_packets.detach();
 				ft::recording::finish_all();
 				ft::game_timing::stop();
@@ -119,6 +143,7 @@ bool obs_module_load(void) {
 void obs_module_unload(void) {
 	obs_frontend_remove_event_callback(on_event, nullptr);
 	obs_remove_tick_callback(on_tick, nullptr);
+	savers.clear();
 	ft::logs::replay_packets.detach();
 	ft::recording::finish_all();
 	ft::game_timing::stop();
