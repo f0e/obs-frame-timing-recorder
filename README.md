@@ -1,5 +1,10 @@
 # obs-frame-timing-recorder
 
+> [!WARNING]
+> This plugin is completely AI-written. The idea behind it is mine, and I oversaw the creation of it as much as one can when it comes to AI prompting, but I can't guarantee the implementation-specific details and logic behind it are correct. I've got a feeling a lot of this is overengineered and probably somewhat wrong in places, but it seems to work pretty well. I'm only releasing this so other people can play around with it. Don't expect perfect results.
+
+---
+
 An OBS plugin that logs when each recorded frame was really drawn, so
 [blur](https://github.com/f0e/blur) can interpolate recordings on the game's real timeline instead of
 assuming their frames are evenly spaced.
