@@ -19,8 +19,8 @@ namespace ft {
 			D3D11_QUERY_DESC disjoint{ D3D11_QUERY_TIMESTAMP_DISJOINT, 0 };
 			D3D11_QUERY_DESC stamp{ D3D11_QUERY_TIMESTAMP, 0 };
 			if (FAILED(device->CreateQuery(&disjoint, &slot.disjoint)) ||
-			    FAILED(device->CreateQuery(&stamp, &slot.begin)) ||
-			    FAILED(device->CreateQuery(&stamp, &slot.end))) {
+			    FAILED(device->CreateQuery(&stamp, &slot.begin)) || FAILED(device->CreateQuery(&stamp, &slot.end)))
+			{
 				obs_log(LOG_WARNING, "the gpu wouldn't give timestamp queries - falling back to the flush event");
 				broken = true;
 				slots.clear();

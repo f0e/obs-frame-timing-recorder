@@ -166,8 +166,7 @@ namespace ft {
 				executable,
 				(unsigned long long)process_id,
 				(double)interval / 1e6,
-				(flags & CAPTURE_SHARED_MEMORY) ? ", in compatibility mode - the timing model doesn't cover that"
-				                                : ""
+				(flags & CAPTURE_SHARED_MEMORY) ? ", in compatibility mode - the timing model doesn't cover that" : ""
 			);
 		}
 	}

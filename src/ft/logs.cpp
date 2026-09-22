@@ -7,20 +7,18 @@ namespace ft::logs {
 		if (packet->type != OBS_ENCODER_VIDEO)
 			return;
 
-		static_cast<PacketLog*>(param)->records.push(
-			{
-				packet->pts,
-				packet->dts,
-				packet->dts_usec,
-				packet->sys_dts_usec,
-				packet->size,
-				packet->keyframe ? 1u : 0u,
-				time ? time->cts : 0,
-				time ? time->fer : 0,
-				time ? time->ferc : 0,
-				win::qpc_now(),
-			}
-		);
+		static_cast<PacketLog*>(param)->records.push({
+			packet->pts,
+			packet->dts,
+			packet->dts_usec,
+			packet->sys_dts_usec,
+			packet->size,
+			packet->keyframe ? 1u : 0u,
+			time ? time->cts : 0,
+			time ? time->fer : 0,
+			time ? time->ferc : 0,
+			win::qpc_now(),
+		});
 	}
 
 	void PacketLog::attach(obs_output_t* next) {

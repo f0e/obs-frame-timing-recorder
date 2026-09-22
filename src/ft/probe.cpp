@@ -240,7 +240,7 @@ namespace ft::probe {
 				probe->fingerprinting ? probe->target_size() : std::nullopt;
 			gs_texture_t* picture =
 				size ? probe->fingerprint.capture(probe->context, size->first, size->second, probe->target_space())
-				     : nullptr;
+					 : nullptr;
 
 			// without one, the pass-through draw is the read instead
 			if (!picture)
@@ -311,9 +311,7 @@ namespace ft::probe {
 			.get_properties =
 				[](void*) {
 					obs_properties_t* properties = obs_properties_create();
-					obs_properties_add_bool(
-						properties, SETTING_FINGERPRINT, obs_module_text("Probe.Fingerprint")
-					);
+					obs_properties_add_bool(properties, SETTING_FINGERPRINT, obs_module_text("Probe.Fingerprint"));
 					return properties;
 				},
 			.update =

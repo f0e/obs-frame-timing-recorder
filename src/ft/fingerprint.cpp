@@ -148,8 +148,8 @@ namespace ft {
 			return false;
 
 		uint32_t rows = gs_stagesurface_get_height(slot.surface);
-		uint32_t row = gs_stagesurface_get_width(slot.surface) *
-		               bytes_per_pixel(gs_stagesurface_get_color_format(slot.surface));
+		uint32_t row =
+			gs_stagesurface_get_width(slot.surface) * bytes_per_pixel(gs_stagesurface_get_color_format(slot.surface));
 		// the padding at the end of a row is whatever was in the memory, so only the picture is hashed
 		uint64_t value = 0xcbf29ce484222325;
 		for (uint32_t y = 0; y < rows; y++)
@@ -184,17 +184,17 @@ namespace ft {
 			slot.surface = gs_stagesurface_create(step_cx, step_cy, format);
 
 		broken = !picture || std::ranges::any_of(steps, [](gs_texrender_t* step) {
-			         return !step;
-		         }) ||
-		         std::ranges::any_of(staged, [](const Staged& slot) {
-			         return !slot.surface;
-		         });
+			return !step;
+		}) || std::ranges::any_of(staged, [](const Staged& slot) {
+			return !slot.surface;
+		});
 
 		if (broken) {
 			obs_log(LOG_WARNING, "couldn't set up picture fingerprints (%ux%u, format %d)", cx, cy, format);
 			release();
 			broken = true;
-		} else {
+		}
+		else {
 			obs_log(
 				LOG_INFO,
 				"fingerprinting the captured picture: %ux%u reduced to %ux%u in %zu steps",
